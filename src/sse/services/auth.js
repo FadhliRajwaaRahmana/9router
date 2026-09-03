@@ -165,12 +165,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       if (current && current.lastUsedAt && currentCount < stickyLimit) {
         // Stay with current account
         connection = current;
-        // Update lastUsedAt + count fire-and-forget: the round-robin pointer
-        // does not need to block the hot path on a DB write (Optimization #11).
-        updateProviderConnection(connection.id, {
+        // Update lastUsedAt and increment count (await to ensure persistence)
+        await updateProviderConnection(connection.id, {
           lastUsedAt: new Date().toISOString(),
           consecutiveUseCount: (connection.consecutiveUseCount || 0) + 1
-        }).catch(() => {});
+        });
       } else {
         // Pick the least recently used (excluding current if possible)
         const sortedByOldest = [...availableConnections].sort((a, b) => {
@@ -182,11 +181,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
         connection = sortedByOldest[0];
 
-        // Update lastUsedAt + reset count fire-and-forget (same as above)
-        updateProviderConnection(connection.id, {
+        // Update lastUsedAt and reset count to 1 (await to ensure persistence)
+        await updateProviderConnection(connection.id, {
           lastUsedAt: new Date().toISOString(),
           consecutiveUseCount: 1
-        }).catch(() => {});
+        });
       }
     } else {
       // Default: fill-first (already sorted by priority in getProviderConnections)

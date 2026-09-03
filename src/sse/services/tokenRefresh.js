@@ -3,6 +3,7 @@ import * as log from "../utils/logger.js";
 import { updateProviderConnection } from "../../lib/localDb.js";
 import {
   getProjectIdForConnection,
+  invalidateProjectId,
   removeConnection,
 } from "open-sse/services/projectId.js";
 import {
@@ -123,12 +124,8 @@ function needsProjectId(provider) {
 function _refreshProjectId(provider, connectionId, accessToken) {
   if (!needsProjectId(provider) || !connectionId || !accessToken) return;
 
-  // NOTE: do NOT invalidate the cached projectId before fetching. The cache has
-  // a 1-hour TTL; evicting it here turns every subsequent request into a
-  // blocking loadCodeAssist/onboardUser fetch in the hot path (chat.js) when
-  // this background refresh fails — a major Antigravity latency source.
-  // getProjectIdForConnection still returns the cached value if fresh, and
-  // only updates the cache when a real fetch succeeds.
+  // Evict the stale cached entry so getProjectIdForConnection does a real fetch
+  invalidateProjectId(connectionId);
 
   getProjectIdForConnection(connectionId, accessToken)
     .then((projectId) => {
