@@ -1,3 +1,9 @@
+# v0.5.74 (2026-09-08) — 9router-imagefix
+
+## Features
+- **Usage**: add "All" (All-Time) period option to dashboard and API — view total
+  tokens, requests, costs, and timeline chart without the 60-day limitation.
+
 # v0.5.71 (2026-08-31) — 9router-imagefix
 
 ## Features

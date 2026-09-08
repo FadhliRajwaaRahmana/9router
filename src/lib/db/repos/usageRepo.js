@@ -709,6 +709,34 @@ export async function getChartData(period = "7d") {
     return buckets;
   }
 
+  if (period === "all") {
+    const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const dayRows = loadDaysInRange(db, null);
+    if (!dayRows.length) return [];
+
+    const sortedDays = dayRows.slice().sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+    const firstDateParts = sortedDays[0].dateKey.split("-").map(Number);
+    const firstDate = new Date(firstDateParts[0], firstDateParts[1] - 1, firstDateParts[2]);
+    const today = new Date();
+    const msPerDay = 86400000;
+    const totalDays = Math.max(1, Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()) - firstDate) / msPerDay) + 1);
+
+    const dayMap = {};
+    for (const r of sortedDays) dayMap[r.dateKey] = parseJson(r.data, {});
+
+    return Array.from({ length: totalDays }, (_, i) => {
+      const d = new Date(firstDate);
+      d.setDate(d.getDate() + i);
+      const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const dayData = dayMap[dateKey];
+      return {
+        label: labelFn(d),
+        tokens: dayData ? (dayData.promptTokens || 0) + (dayData.completionTokens || 0) : 0,
+        cost: dayData ? (dayData.cost || 0) : 0,
+      };
+    });
+  }
+
   const bucketCount = period === "7d" ? 7 : period === "30d" ? 30 : 60;
   const today = new Date();
   const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
