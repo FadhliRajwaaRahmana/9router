@@ -1,3 +1,10 @@
+# v0.5.76 (2026-09-10) — 9router-imagefix
+
+## Features
+- **Usage**: real-time dynamic sync for all periods (Today, 24h, 7D, 30D, 60D, All) —
+  stream endpoint now accepts the active period and pushes full real-time updates
+  (requests, tokens, cost, tables) as new requests complete, eliminating manual page refresh.
+
 # v0.5.75 (2026-09-10) — 9router-imagefix
 
 ## Fixes
