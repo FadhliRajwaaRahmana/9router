@@ -1,3 +1,10 @@
+# v0.5.75 (2026-09-10) — 9router-imagefix
+
+## Fixes
+- **Antigravity**: auto-detect permanent 401 auth failures and trigger domain breaker immediately —
+  treat HTTP 401 on Google Cloud Code endpoint as permanent failure, return invalid_grant
+  on token refresh failure, and bulk-disable dead GSuite domains immediately.
+
 # v0.5.74 (2026-09-08) — 9router-imagefix
 
 ## Features
