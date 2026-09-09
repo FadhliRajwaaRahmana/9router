@@ -220,6 +220,9 @@ export async function refreshGoogleToken(refreshToken, clientId, clientSecret, l
     if (!response.ok) {
       const errorText = await response.text();
       log?.error?.("TOKEN_REFRESH", "Failed to refresh Google token", { status: response.status, error: errorText });
+      if (errorText.includes("invalid_grant") || errorText.includes("deleted") || errorText.includes("disabled")) {
+        return { error: "invalid_grant", message: errorText };
+      }
       return null;
     }
 

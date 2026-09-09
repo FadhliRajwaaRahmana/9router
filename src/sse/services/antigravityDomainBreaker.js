@@ -44,12 +44,16 @@ const PERMANENT_AUTH_PATTERNS = [
   /user.*(?:deleted|disabled|not found|suspended)/i,
   /Bad Request/i,
   /NO_CREDENTIALS/i,
+  /401/i,
+  /unauthorized/i,
 ];
 
 export function isPermanentAntigravityAuthFailure(status, errorText) {
   if (status !== 400 && status !== 401 && status !== 403) return false;
+  // HTTP 401 on Google Cloud Code generateContent endpoint is ALWAYS a permanent auth failure (revoked/deleted token)
+  if (status === 401) return true;
   const text = String(errorText || "");
-  if (!text) return false;
+  if (!text) return status === 401;
   return PERMANENT_AUTH_PATTERNS.some((re) => re.test(text));
 }
 
