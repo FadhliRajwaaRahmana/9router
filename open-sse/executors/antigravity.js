@@ -112,10 +112,17 @@ function buildIdeRequestId({ body, request, credentials, model, requestType }) {
 export class AntigravityExecutor extends BaseExecutor {
   constructor() {
     super("antigravity", PROVIDERS.antigravity);
-    // Optimization #10: Cap connect timeout at 15s (default 60s stalls rotation
-    // when the picked account is slow/dead — with 100+ accounts round-robin,
-    // waiting 60s per dead account makes every request feel slow).
-    this.config.timeoutMs = 15000;
+    // Optimization #10 (revised): headers timeout for large agent payloads.
+    // Measured real TTFB on 1.2 MB / 117-tool / thinking-high requests:
+    // 18-23 s (Google must ingest the prompt before it emits SSE headers).
+    // The old 15 s cap aborted every big Claude Code turn, and because
+    // 502 retries 4× with 3 s backoff that produced a ~69 s stall
+    // (15×4 + 3×3) before falling through to the next account.
+    // Dead accounts do NOT need this budget: they answer 401 in <1 s, so the
+    // 401 circuit breaker still rotates them instantly. Only slow-but-alive
+    // upstreams consume the window. Override: ANTIGRAVITY_CONNECT_TIMEOUT_MS.
+    const envTimeout = parseInt(process.env.ANTIGRAVITY_CONNECT_TIMEOUT_MS || "", 10);
+    this.config.timeoutMs = Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : 120000;
     // Optimization #1: Local projectId cache to avoid API call on every request
     this.projectId = null;
     // Optimization #5: Schema cache to avoid re-processing tools on every request

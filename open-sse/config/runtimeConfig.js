@@ -58,6 +58,14 @@ export const STREAM_FIRST_CHUNK_TIMEOUT_MS = envMs("STREAM_FIRST_CHUNK_TIMEOUT_M
 // Fetch connect timeout: abort if upstream doesn't return response headers within this duration
 export const FETCH_CONNECT_TIMEOUT_MS = envMs("FETCH_CONNECT_TIMEOUT_MS", 60 * 1000);
 
+// Above this budget a connect timeout is treated as "upstream unreachable"
+// rather than "upstream slow", so BaseExecutor fails fast instead of retrying.
+// A retry only pays off when the window is short enough that a healthy
+// upstream could plausibly have been cut off; with a large window (antigravity
+// uses 120 s) a timeout at the full budget means no route to the host, and
+// retrying just multiplies the stall. Env: NO_RETRY_TIMEOUT_MS.
+export const NO_RETRY_TIMEOUT_MS = envMs("NO_RETRY_TIMEOUT_MS", 60 * 1000);
+
 // Gemini native TTS fetch timeout: abort if Google does not return response headers in time.
 export const GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS = envMs("GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS", 45 * 1000);
 
