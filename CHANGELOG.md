@@ -1,3 +1,10 @@
+# v0.5.77 (2026-09-10) — 9router-imagefix
+
+## Features
+- **Usage**: add Export & Import backup buttons to Usage & Analytics dashboard —
+  easily download full usage history, daily aggregates, and lifetime counters to JSON,
+  or import and merge backup files across different machines for seamless token tracking continuity.
+
 # v0.5.76 (2026-09-10) — 9router-imagefix
 
 ## Features

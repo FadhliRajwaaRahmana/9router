@@ -66,6 +66,10 @@ export {
 export {
   saveRequestDetail, getRequestDetails, getRequestDetailById, getDistinctProviders,
 } from "./repos/requestDetailsRepo.js";
+export {
+  exportUsageData,
+  importUsageData,
+} from "./repos/usageRepo.js";
 
 // Export/import full DB
 export async function exportDb() {

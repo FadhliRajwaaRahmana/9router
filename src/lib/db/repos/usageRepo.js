@@ -798,3 +798,167 @@ export async function getRecentLogs(limit = 200) {
     return [];
   }
 }
+/**
+ * Export usage records (usageDaily, usageHistory, totalRequestsLifetime)
+ * @param {object} options
+ * @param {boolean} [options.historyOnly] - export only history
+ * @returns {Promise<object>}
+ */
+export async function exportUsageData() {
+  const db = await getAdapter();
+  const daily = db.all("SELECT dateKey, data FROM usageDaily ORDER BY dateKey ASC");
+  const history = db.all(
+    "SELECT timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta FROM usageHistory ORDER BY id ASC"
+  );
+  const meta = db.get("SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'");
+
+  return {
+    version: 1,
+    type: "9router_usage_backup",
+    exportedAt: new Date().toISOString(),
+    totalRequestsLifetime: meta?.value ? parseInt(meta.value, 10) : 0,
+    daily,
+    history,
+  };
+}
+
+/**
+ * Import usage records with merge support
+ * @param {object} payload
+ * @param {string} [mode="merge"] - "merge" or "replace"
+ */
+export async function importUsageData(payload, mode = "merge") {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Invalid usage backup payload");
+  }
+
+  const db = await getAdapter();
+  const daily = Array.isArray(payload.daily) ? payload.daily : [];
+  const history = Array.isArray(payload.history) ? payload.history : [];
+  const incomingLifetime = typeof payload.totalRequestsLifetime === "number" ? payload.totalRequestsLifetime : 0;
+
+  db.transaction(() => {
+    if (mode === "replace") {
+      db.run("DELETE FROM usageDaily");
+      db.run("DELETE FROM usageHistory");
+      db.run(
+        "INSERT INTO _meta(key, value) VALUES('totalRequestsLifetime', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [String(incomingLifetime)]
+      );
+
+      for (const d of daily) {
+        if (d.dateKey && d.data) {
+          db.run("INSERT INTO usageDaily(dateKey, data) VALUES(?, ?)", [d.dateKey, stringifyJson(d.data)]);
+        }
+      }
+
+      for (const h of history) {
+        db.run(
+          "INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [
+            h.timestamp,
+            h.provider || null,
+            h.model || null,
+            h.connectionId || null,
+            h.apiKey || null,
+            h.endpoint || null,
+            h.promptTokens || 0,
+            h.completionTokens || 0,
+            h.cost || 0,
+            h.status || "ok",
+            stringifyJson(h.tokens || {}),
+            stringifyJson(h.meta || {}),
+          ]
+        );
+      }
+    } else {
+      // Merge mode: insert non-duplicate history entries and merge daily summaries
+      for (const d of daily) {
+        if (!d.dateKey || !d.data) continue;
+        const incomingData = parseJson(d.data, null);
+        if (!incomingData) continue;
+
+        const row = db.get("SELECT data FROM usageDaily WHERE dateKey = ?", [d.dateKey]);
+        if (!row) {
+          db.run("INSERT INTO usageDaily(dateKey, data) VALUES(?, ?)", [d.dateKey, stringifyJson(incomingData)]);
+        } else {
+          const existing = parseJson(row.data, {});
+          existing.requests = (existing.requests || 0) + (incomingData.requests || 0);
+          existing.promptTokens = (existing.promptTokens || 0) + (incomingData.promptTokens || 0);
+          existing.completionTokens = (existing.completionTokens || 0) + (incomingData.completionTokens || 0);
+          existing.cachedTokens = (existing.cachedTokens || 0) + (incomingData.cachedTokens || 0);
+          existing.cost = (existing.cost || 0) + (incomingData.cost || 0);
+
+          for (const grp of ["byProvider", "byModel", "byAccount", "byApiKey", "byEndpoint"]) {
+            existing[grp] ||= {};
+            for (const [k, v] of Object.entries(incomingData[grp] || {})) {
+              if (!existing[grp][k]) {
+                existing[grp][k] = { ...v };
+              } else {
+                existing[grp][k].requests = (existing[grp][k].requests || 0) + (v.requests || 0);
+                existing[grp][k].promptTokens = (existing[grp][k].promptTokens || 0) + (v.promptTokens || 0);
+                existing[grp][k].completionTokens = (existing[grp][k].completionTokens || 0) + (v.completionTokens || 0);
+                existing[grp][k].cachedTokens = (existing[grp][k].cachedTokens || 0) + (v.cachedTokens || 0);
+                existing[grp][k].cost = (existing[grp][k].cost || 0) + (v.cost || 0);
+              }
+            }
+          }
+          db.run("UPDATE usageDaily SET data = ? WHERE dateKey = ?", [stringifyJson(existing), d.dateKey]);
+        }
+      }
+
+      // Merge history entries, skipping exact duplicates
+      let addedHistoryCount = 0;
+      for (const h of history) {
+        if (!h.timestamp) continue;
+        const dup = db.get(
+          `SELECT id FROM usageHistory
+           WHERE timestamp = ?
+             AND COALESCE(provider, '') = COALESCE(?, '')
+             AND COALESCE(model, '') = COALESCE(?, '')
+             AND promptTokens = ?
+             AND completionTokens = ?
+           LIMIT 1`,
+          [h.timestamp, h.provider || null, h.model || null, h.promptTokens || 0, h.completionTokens || 0]
+        );
+
+        if (!dup) {
+          db.run(
+            "INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+              h.timestamp,
+              h.provider || null,
+              h.model || null,
+              h.connectionId || null,
+              h.apiKey || null,
+              h.endpoint || null,
+              h.promptTokens || 0,
+              h.completionTokens || 0,
+              h.cost || 0,
+              h.status || "ok",
+              stringifyJson(h.tokens || {}),
+              stringifyJson(h.meta || {}),
+            ]
+          );
+          addedHistoryCount++;
+        }
+      }
+
+      // Increment lifetime counter by new entries added
+      if (addedHistoryCount > 0) {
+        const cur = db.get("SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'");
+        const currentCount = cur ? parseInt(cur.value, 10) : 0;
+        const newTotal = Math.max(currentCount + addedHistoryCount, incomingLifetime);
+        db.run(
+          "INSERT INTO _meta(key, value) VALUES('totalRequestsLifetime', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+          [String(newTotal)]
+        );
+      }
+    }
+  });
+
+  // Re-seed ring & notify all live clients
+  recentRing.initialized = false;
+  await ensureRingInitialized();
+  scheduleStatsEvent("update", 50);
+}
