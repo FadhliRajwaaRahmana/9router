@@ -1,3 +1,8 @@
+# v0.5.79 (2026-09-10) — 9router-imagefix
+
+## Fixes
+- **Cerebras**: automatically strip unsupported `store` parameter — prevents `400 wrong_api_format: store: property 'store' is unsupported` when clients like OMP / OpenAI SDKs pass `store: false` or `store: true`.
+
 # v0.5.78 (2026-09-10) — 9router-imagefix
 
 ## Fixes
