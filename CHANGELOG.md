@@ -1,3 +1,9 @@
+# v0.5.78 (2026-09-10) — 9router-imagefix
+
+## Fixes
+- **ProxyFetch**: remove Google Cloud Code APIs (`cloudcode-pa.googleapis.com` / `daily-cloudcode-pa.googleapis.com`) from manual socket MITM bypass — route directly through undici keep-alive dispatcher pool to eliminate `ETIMEDOUT 172.217.114.4:443` connect timeouts and 90s connection lag.
+- **ProxyFetch**: add 8s fail-fast socket connection timeout for any remaining manual bypass hosts to prevent hanging requests.
+
 # v0.5.77 (2026-09-10) — 9router-imagefix
 
 ## Features

@@ -99,9 +99,10 @@ async function tryGotScrapingFetch(url, options) {
 
 // DNS cache — use Map to avoid prototype pollution via malformed hostnames
 const DNS_CACHE = new Map();
+// MITM_BYPASS_HOSTS: Hostnames that should bypass local DNS hijack / MITM redirect
+// Note: Google Cloud Code APIs (cloudcode-pa / daily-cloudcode-pa) use direct keep-alive
+// undici dispatcher instead of manual raw sockets to ensure high throughput & connection reuse.
 const MITM_BYPASS_HOSTS = [
-  "cloudcode-pa.googleapis.com",
-  "daily-cloudcode-pa.googleapis.com",
   "api.individual.githubcopilot.com",
   "q.us-east-1.amazonaws.com",
   "codewhisperer.us-east-1.amazonaws.com",
@@ -270,6 +271,10 @@ async function createBypassRequest(parsedUrl, realIP, options) {
 
   return new Promise((resolve, reject) => {
     const socket = new net.Socket();
+    socket.setTimeout(8000);
+    socket.on("timeout", () => {
+      socket.destroy(new Error(`connect ETIMEDOUT ${realIP}:${HTTPS_PORT} (timeout 8s)`));
+    });
 
     socket.connect(HTTPS_PORT, realIP, () => {
       const reqOptions = {
