@@ -7,6 +7,7 @@ import { resolveSessionId } from "../utils/sessionManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { cleanJSONSchemaForAntigravity } from "../translator/formats/gemini.js";
 import { DEFAULT_THINKING_AG_SIGNATURE } from "../config/defaultThinkingSignature.js";
+import { GEMINI_ROLE } from "../translator/schema/roles.js";
 
 // Sanitize function name: Gemini requires [a-zA-Z_][a-zA-Z0-9_.:\-]{0,63}
 function sanitizeFunctionName(name) {
@@ -338,6 +339,16 @@ export class AntigravityExecutor extends BaseExecutor {
     const generationConfig = { ...(requestWithoutTools.generationConfig || {}) };
     if (generationConfig.maxOutputTokens > MAX_ANTIGRAVITY_OUTPUT_TOKENS) {
       generationConfig.maxOutputTokens = MAX_ANTIGRAVITY_OUTPUT_TOKENS;
+    }
+
+    // Google rejects a request whose last content is a model turn:
+    // "Requests ending with a model turn are not supported." A client ends on an
+    // assistant message whenever its previous response was interrupted (Esc /
+    // stop), so append a user nudge and let the model continue instead of
+    // failing. Verified live: identical payloads differ only in this tail —
+    // model-last → 400, user-last → 200.
+    if (contents?.at(-1)?.role === GEMINI_ROLE.MODEL) {
+      contents.push({ role: GEMINI_ROLE.USER, parts: [{ text: "Continue." }] });
     }
 
     const transformedRequest = {
