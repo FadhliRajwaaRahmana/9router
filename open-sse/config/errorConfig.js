@@ -28,11 +28,12 @@ export const DEFAULT_ERROR_MESSAGES = {
   504: "Gateway timeout"
 };
 
-// Exponential backoff config for rate limits
+// Exponential backoff config for rate limits (burst cooldown)
+// Capped at 30s so multi-account pools never get completely starved for minutes.
 export const BACKOFF_CONFIG = {
   base: 2000,
-  max: 5 * 60 * 1000,
-  maxLevel: 15
+  max: 30 * 1000,
+  maxLevel: 5
 };
 
 // Default cooldown for transient/unknown errors

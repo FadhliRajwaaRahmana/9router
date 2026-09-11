@@ -240,7 +240,9 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
-  const backoffLevel = conn?.backoffLevel || 0;
+  // Decay backoff level if the previous error was more than 2 minutes ago
+  const isStaleError = conn?.lastErrorAt && (Date.now() - new Date(conn.lastErrorAt).getTime() > 120_000);
+  const backoffLevel = isStaleError ? 0 : (conn?.backoffLevel || 0);
 
   // GitHub premium-request exhaustion is account-wide until the next UTC month.
   const githubResetAtMs = githubMonthlyResetMs(status, errorText, provider);
