@@ -26,7 +26,9 @@ export default {
     },
     retry: {
       "429": {
-        attempts: 3,
+        // Fail fast on 429 burst rate limits so chatCore immediately rotates
+        // to the next account instead of wasting ~16s retrying the same blocked account.
+        attempts: 0,
       },
       "500": {
         attempts: 3,
