@@ -9,6 +9,7 @@ import { getCredentialExpiryMs } from "open-sse/services/oauthCredentialManager.
 export const BACKGROUND_REFRESH_LEAD_MS = 30 * 60 * 1000;
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const INITIAL_DELAY_MS = 10 * 1000;
+const SENSITIVE_PROVIDERS = new Set(["antigravity", "gemini-cli"]);
 
 let started = false;
 let intervalHandle = null;
@@ -92,17 +93,18 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
   try {
     const load = deps.loadConnections || loadActiveConnections;
     const refresh = deps.refreshConnection || refreshOne;
+    const sleep = deps.sleep || ((ms) => new Promise((res) => setTimeout(res, ms)));
 
     const connections = await load();
     const due = selectConnectionsNeedingRefresh(connections, Date.now());
 
     if (due.length === 0) return;
 
-    const isSensitiveProvider = (p) => p === "antigravity" || p === "gemini-cli";
     const baseSensitiveDelay = Number(process.env.BG_REFRESH_GOOGLE_DELAY_MS) || 12_000;
     const baseNormalDelay = Number(process.env.BG_REFRESH_DELAY_MS) || 1_500;
 
-    for (const conn of due) {
+    for (let i = 0; i < due.length; i++) {
+      const conn = due[i];
       try {
         await refresh(conn);
         log.info("BG_TOKEN_REFRESH", "Connection refresh finished", {
@@ -120,9 +122,12 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
       }
 
       // Sequential delay between accounts to prevent bursting upstream providers (especially Google Cloud)
-      const baseDelay = isSensitiveProvider(conn.provider) ? baseSensitiveDelay : baseNormalDelay;
-      const jitter = isSensitiveProvider(conn.provider) ? Math.floor(Math.random() * 4000) : 200;
-      await new Promise((res) => setTimeout(res, baseDelay + jitter));
+      if (i < due.length - 1) {
+        const isSensitive = SENSITIVE_PROVIDERS.has(conn.provider);
+        const baseDelay = isSensitive ? baseSensitiveDelay : baseNormalDelay;
+        const jitter = isSensitive ? Math.floor(Math.random() * 4000) : 200;
+        await sleep(baseDelay + jitter);
+      }
     }
   } catch (err) {
     log.warn("BG_TOKEN_REFRESH", "Tick failed (swallowed)", {
