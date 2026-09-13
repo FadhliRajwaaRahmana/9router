@@ -1,3 +1,57 @@
+# v0.5.87 (2026-09-13) — 9router-imagefix
+
+## Features
+- **Freebuff**: new provider — free, ad-supported coding agent by Codebuff
+  (`freebuff.com`). Fingerprint device-flow login, 7 models (GLM 5.3 Flash,
+  DeepSeek V4.1 Flash, GPT-5.6 Luna, MiMo 2.5, Solar Pro 4, Muse Spark 1.2,
+  Claude Fable 5 limited). Freebucks session pricing is server-authoritative —
+  the daily pool is read via `GET /api/v1/freebuff/session` (never POST, which
+  would claim a session and burn quota). 403 `country_blocked` is surfaced as a
+  region message rather than a re-login hint.
+- **Freebuff**: strict model assignment — one account binds ONE model per
+  session (a different model returns `409 model_locked`). The per-provider
+  `strictModelAssignment` toggle restricts account selection to accounts whose
+  `freebuffModel` matches the requested model; unassigned accounts are
+  excluded while the toggle is on.
+- **Freebuff**: pool-fitness registry — an executor that learns a proxy pool's
+  egress is unfit for a provider/model marks it here, and the pool picker skips
+  that pool for the scope until the cooldown expires. Advisory and fail-open.
+- **Cline**: 6 free-tier models (billed $0, quota separate from ClinePass) —
+  Muse Spark 1.3, DeepSeek V4 Flash, GLM 5.3 Flash, Solar Pro 4, LongCat 2.0,
+  Laguna S 2.1. The `cline-free/*` aliases require Cline product headers or
+  upstream 403s with "only available via Cline product surfaces".
+- **Cline**: API-key authentication alongside OAuth (dual auth). API keys ride
+  plain `Bearer sk_*`; OAuth access tokens carry the WorkOS `workos:` prefix —
+  a single merged token cannot express both.
+
+## Fixes
+- **Auth**: Freebucks exhaustion is a hard stop until the daily Pacific reset
+  (up to ~24h) — the account is skipped for the day instead of being re-poked
+  every 30 min. Guarded at 26h so a bad server value cannot lock forever.
+- **Executor**: `preserveHookAuth` descriptor flag — a header hook may own the
+  `Authorization` value instead of the merged token (required by Cline's
+  dual-auth shape).
+- **Executor**: gateway envelopes wrapping an OpenAI Chat Completions body in a
+  `data` field (Cline: `{data, success}`) are unwrapped after logging and before
+  usage extraction, so choices/usage resolve downstream instead of surfacing as
+  "no completion choices". Generic guard, no provider hardcode.
+- **Chat**: carry the executor's own status (429/409 quota gates) when it throws
+  one, so combo/account fallback triggers instead of a generic 502.
+- **Models**: capabilities for Upstage Solar Pro and LongCat (200K context /
+  32K output), placed before the o-series catch-alls since "solar-pro4"
+  contains "o4".
+- **Usage**: Freebucks daily pool is folded under each priced model row, with
+  the server's announced `priceChanges` schedule applied so promos expire and
+  revert on the server's timeline with no client release.
+
+## Notes
+- Harvest helper: `add-account-freebuff-9router.py` (device-flow add, quota
+  check, model assignment, diagnostics).
+- Freebuff binds one account to one model — use a separate account per model,
+  or wait for the session to expire.
+
+---
+
 # v0.5.79 (2026-09-10) — 9router-imagefix
 
 ## Fixes

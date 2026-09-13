@@ -25,8 +25,13 @@ function setAuth(headers, spec, token) {
 // Resolve auth onto headers from a descriptor.
 function applyAuth(headers, desc, credentials) {
   if (desc.combined) {
-    // combined providers always set the header (legacy behavior, incl. noAuth → "Bearer undefined")
-    setAuth(headers, desc, credentials.apiKey || credentials.accessToken);
+    // combined providers always set the header (legacy behavior, incl. noAuth → "Bearer undefined") —
+    // unless the descriptor opts into preserveHookAuth: a hook then owns the
+    // Authorization value (e.g. Cline needs workos:-prefixed OAuth tokens but
+    // plain API keys, which a single merged token can't express).
+    if (!(desc.preserveHookAuth && headers[desc.header])) {
+      setAuth(headers, desc, credentials.apiKey || credentials.accessToken);
+    }
     if (desc.anthropicVersion && !headers["anthropic-version"]) headers["anthropic-version"] = ANTHROPIC_API_VERSION;
     return;
   }

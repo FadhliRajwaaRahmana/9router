@@ -259,6 +259,25 @@ export function formatResetTime(date) {
 }
 
 /**
+ * "$25", "$4.20", "$0" — whole dollars until the figure is small enough that
+ * the cents are the story. Mirrors upstream formatAllowanceUsd.
+ */
+export function formatFreebucksUsd(usd) {
+  const safe = Math.max(0, Number(usd));
+  if (safe >= 10) return `$${Math.round(safe)}`;
+  if (safe >= 1) return `$${safe.toFixed(1).replace(/\.0$/, "")}`;
+  return `$${safe.toFixed(2)}`;
+}
+
+/**
+ * "15 Freebucks/hr" — a bare number would read as dollars; the unit is the
+ * hour, not the message.
+ */
+export function formatFreebucksPrice(price) {
+  return `${Math.max(0, Math.round(Number(price) || 0))} Freebucks/hr`;
+}
+
+/**
  * Get Tailwind color class based on percentage
  * @param {number} percentage - Remaining percentage (0-100)
  * @returns {string} Color name: "green" | "yellow" | "red"
@@ -627,6 +646,27 @@ export function parseQuotaData(provider, data) {
               resetAt: quota.resetAt || null,
               remainingPercentage: quota.remainingPercentage,
               unlimited: quota.unlimited,
+            });
+          });
+        }
+        break;
+
+      case "freebuff":
+        // Session quotas keyed by model id — label rows with the friendly
+        // displayName (from the registry) and keep modelKey for ordering.
+        // Metered rows carry the live Freebucks price (price) + promo tagline
+        // (priceNote), both server-authoritative.
+        if (data.quotas) {
+          Object.entries(data.quotas).forEach(([modelKey, quota]) => {
+            normalizedQuotas.push({
+              name: quota.displayName || modelKey,
+              modelKey,
+              used: quota.used || 0,
+              total: quota.total || 0,
+              resetAt: quota.resetAt || null,
+              recurring: quota.recurring !== false,
+              price: quota.price,
+              priceNote: quota.priceNote,
             });
           });
         }

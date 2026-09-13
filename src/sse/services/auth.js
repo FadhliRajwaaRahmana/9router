@@ -9,6 +9,24 @@ import * as log from "../utils/logger.js";
 // Mutex to prevent race conditions during account selection
 let selectionMutex = Promise.resolve();
 
+/**
+ * Freebuff binds ONE account to ONE model per session — requesting a different
+ * model while a session is active returns 'model_locked' (409). When the
+ * per-provider `strictModelAssignment` toggle is on, only accounts explicitly
+ * assigned to the requested model are eligible.
+ */
+export function filterConnectionsForModel(providerId, connections, model, settings = {}) {
+  const override = (settings.providerStrategies || {})[providerId] || {};
+  if (override.strictModelAssignment !== true || !model) {
+    return connections;
+  }
+  return connections.filter((connection) => {
+    const assignedModel = connection.providerSpecificData?.assignedModel
+      || (providerId === "freebuff" ? connection.providerSpecificData?.freebuffModel : null);
+    return assignedModel === model;
+  });
+}
+
 const GITHUB_MONTHLY_USAGE_LIMIT = "you've reached your additional usage limit for your plan";
 
 function githubMonthlyResetMs(status, errorText, provider) {
@@ -69,7 +87,14 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       };
     }
 
-    const connections = await getProviderConnections({ provider: providerId, isActive: true });
+    let connections = await getProviderConnections({ provider: providerId, isActive: true });
+
+    // Strict model assignment (Freebuff: 1 account = 1 model, else 409 model_locked).
+    if (model) {
+      const _settings = await getSettings();
+      connections = filterConnectionsForModel(providerId, connections, model, _settings);
+    }
+
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     if (connections.length === 0) {
@@ -256,9 +281,15 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   } else if (resetsAtMs && resetsAtMs > Date.now()) {
     shouldFallback = true;
     // Antigravity quota API provides exact per-model resetAt. Do not truncate it.
-    cooldownMs = resolveProviderId(provider) === "antigravity"
+    // Freebucks exhaustion is likewise a hard stop until the daily Pacific
+    // reset (up to ~24h) — skip the account for the day rather than re-poke it
+    // every 30 min; guard at 26h so a bad server value can't lock forever.
+    const _pid = resolveProviderId(provider);
+    cooldownMs = _pid === "antigravity"
       ? resetsAtMs - Date.now()
-      : Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
+      : _pid === "freebuff"
+        ? Math.min(resetsAtMs - Date.now(), 26 * 60 * 60 * 1000)
+        : Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
     newBackoffLevel = 0;
   } else {
     ({ shouldFallback, cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel));
