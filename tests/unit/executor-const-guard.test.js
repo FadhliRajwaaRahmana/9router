@@ -39,12 +39,25 @@ describe("provider baseUrl const (full path, no trailing slash)", () => {
   });
 });
 
-describe("antigravity retry (intentional change: 429=6, 503=3)", () => {
-  it("429 attempts = 6", () => {
-    expect(antigravity.transport.retry["429"].attempts).toBe(6);
+describe("antigravity retry (intentional change: no same-host retries, rotate host instead)", () => {
+  // attempts: 0 untuk ketiganya. Retry di host yang sama tidak berguna untuk
+  // 429 (rate limit per akun) maupun 503 "No capacity available" (pool
+  // kapasitas per host) — keduanya tidak sembuh dalam hitungan detik.
+  // chatCore langsung memutar akun, dan AntigravityExecutor.shouldRetry
+  // memutar host (daily -> sandbox), jadi menunggu backoff 2s+4s+8s di host
+  // yang sudah mati kapasitasnya hanya membuang waktu.
+  it("429 attempts = 0", () => {
+    expect(antigravity.transport.retry["429"].attempts).toBe(0);
   });
-  it("503 attempts = 3", () => {
-    expect(antigravity.transport.retry["503"].attempts).toBe(3);
+  it("500 attempts = 0", () => {
+    expect(antigravity.transport.retry["500"].attempts).toBe(0);
+  });
+  it("503 attempts = 0", () => {
+    expect(antigravity.transport.retry["503"].attempts).toBe(0);
+  });
+  it("declares more than one inference host so capacity rotation can happen", () => {
+    expect(Array.isArray(antigravity.transport.baseUrls)).toBe(true);
+    expect(antigravity.transport.baseUrls.length).toBeGreaterThan(1);
   });
 });
 
@@ -78,5 +91,22 @@ describe("OpenCode Free endpoint routing", () => {
     expect(chat.max_tokens).toBe(4096);
     expect(chat.max_output_tokens).toBeUndefined();
     expect(chat.reasoning_effort).toBe("high");
+  });
+
+  // Free tier answers a non-streaming upstream call with 403 FreeTierError
+  // (verified live 2026-09-17: stream:false and a missing `stream` both 403,
+  // across every free model). The executor must always ask upstream for SSE.
+  it("forces streaming upstream even when the client asked for JSON", () => {
+    const executor = new OpenCodeExecutor();
+    const body = { model: "big-pickle", messages: [{ role: "user", content: "hi" }], stream: false };
+    executor.transformRequest("big-pickle", body, false, {});
+    expect(body.stream).toBe(true);
+
+    const missing = { model: "big-pickle", messages: [{ role: "user", content: "hi" }] };
+    executor.transformRequest("big-pickle", missing, false, {});
+    expect(missing.stream).toBe(true);
+
+    // The registry flag drives chatCore's SSE->JSON conversion for such clients.
+    expect(opencode.forceStream).toBe(true);
   });
 });

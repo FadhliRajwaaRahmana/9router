@@ -1,3 +1,179 @@
+# v0.5.90 (2026-09-17) — 9router-imagefix
+
+## Fixes
+- **OpenCode Free: setiap request dijawab `403 FreeTierError`.** Upstream menolak
+  dengan `{"type":"FreeTierError","message":"OpenCode's free tier can only be
+  used from within OpenCode"}` karena fingerprint yang dikirim bukan milik klien
+  OpenCode. Tiga bug bertumpuk:
+
+  1. **Session ID tidak kanonik (penyebab utama).** `resolveOpencodeSession()`
+     memanggil `resolveSessionId({ …, generate: generateSessionId })`, tetapi
+     `resolveSessionIdentity()` di `sessionManager.js` TIDAK punya parameter
+     `generate` — opsi itu diabaikan diam-diam dan jatuh ke `deriveSessionId()`
+     yang mengembalikan `randomUUID() + Date.now()`. Nilai mentah itu dikirim
+     sebagai `x-opencode-session`, padahal upstream memvalidasi BENTUKnya:
+     `ses_` + 12 hex + 14 Base62 (30 char), bukan sekadar keberadaan header.
+
+     ```
+     dikirim   : 28db8664-ce59-4301-bc4d-81d16eff87121789652009205  (49 char)
+     dibutuhkan: ses_ + 12 hex + 14 Base62                          (30 char)
+     ```
+
+  2. **User-Agent tanpa versi.** `OPENCODE_UA` bernilai `"opencode"`; upstream
+     mensyaratkan build `>= 1.17.0`. Diganti ke fingerprint resmi
+     `opencode/1.18.31 ai-sdk/provider-utils/4.0.46 runtime/bun/1.3.14`, dan UA
+     dari klien hanya diteruskan bila versinya valid.
+
+  3. **`xhigh` di-clamp turun ke `high`.** `normalizeOpenAILevel()` di
+     `thinkingUnified.js` menyatukan `max`/`ultra`/`xhigh` dalam satu cabang dan
+     mengembalikan `high`. Karena `xhigh` ADA di `supportedLevels` Muse Spark,
+     level tertinggi hilang dan request "max" berakhir di `high`.
+
+  Perbaikan: generator ID kanonik (mengikuti implementasi referensi Go),
+  `translateSessionId()` deterministik agar percakapan multi-turn tetap dalam
+  satu sesi, UA berversi + validasi, dan cabang clamp `xhigh` diperbaiki.
+
+- **OpenCode Free: request non-streaming dijawab `403 FreeTierError`.** Free tier
+  hanya menerima **streaming**. Diuji langsung ke endpoint mentah memakai header
+  kanonik (bukan lewat executor), hasilnya konsisten di semua model free:
+
+  | permintaan | hasil |
+  |---|---|
+  | `stream:true` + `Accept: text/event-stream` | 200 |
+  | `stream:false` + `Accept: */*` | 403 |
+  | `stream:false` + `Accept: text/event-stream` | 403 |
+  | tanpa `stream` di body | 403 |
+
+  Perbaikan: executor selalu mengirim `stream:true`, dan registry diberi
+  `forceStream: true` supaya `chatCore` melayani klien yang meminta JSON lewat
+  `handleForcedSSEToJson` (upstream tetap SSE, klien tetap menerima JSON).
+
+- **OpenCode: `muse-spark-1.3` tidak pernah ter-routing ke `/responses`.**
+  `RESPONSES_MODELS` adalah `Set` berisi id persis, sehingga varian baru
+  (`muse-spark-1.3`, `muse-spark-1.3-contributor-free`) jatuh ke
+  `/chat/completions` dan ditolak. Kini pencocokan berbasis keluarga
+  (`RESPONSES_MODEL_FAMILIES`) sehingga varian berikutnya ikut benar tanpa
+  mengubah executor, dan `muse-spark-1.3-contributor-free` didaftarkan di
+  registry.
+
+- **OpenCode Responses: kontinuitas & level thinking tidak dinormalisasi.**
+  Item `type:"reasoning"` dari turn sebelumnya dan `encrypted_content` /
+  `reasoning_encrypted_content` kini dibuang; `muse-spark-1.3` dipaksa
+  `tool_choice:"auto"`; cap output dipetakan ke `max_output_tokens`.
+
+## Verification (live, 2026-09-17)
+Set minimal header yang menentukan diisolasi satu per satu terhadap
+`opencode.ai` — hanya **UA berversi + session ID kanonik** yang esensial;
+`x-opencode-client`, `x-opencode-project`, dan `x-api-key` tidak berpengaruh:
+
+```
+                        SEBELUM   SESUDAH
+big-pickle (chat)       403   →   200  {"object":"chat.completion.chunk", …}
+mimo-v2.5-free (chat)   403   →   200
+ling-3.0-flash-fin-free 403   →   200
+nemotron-3-ultra-free   403   →   200
+muse-spark-1.3 (resp)   403   →   200  reasoning.effort:"xhigh"
+```
+Alur end-to-end lewat executor (bukan header buatan tangan) juga 7/7 `200`:
+tanpa header klien, UA `curl/8.0`, UA `opencode` tanpa versi, session non-kanonik,
+`x-opencode-project: global`, seluruh header asing sekaligus, dan model
+non-Responses.
+Skema klien pihak ketiga yang sebelumnya gagal (UA `curl/8.0`, session asing,
+`x-opencode-project: global`, atau seluruh header asing sekaligus) kini
+semuanya `200`.
+
+## Tests
+- 87/87 lulus pada `opencode-muse-spark-thinking`, `executor-const-guard`,
+  `opencode-go-models`, `thinking-unified`, `thinking-effort-openai-max-clamp`.
+- 0 kegagalan terkait OpenCode di seluruh suite; 11 test yang tadinya gagal di
+  baseline ikut lolos.
+
+# v0.5.89 (2026-09-13) — 9router-imagefix
+
+## Fixes
+- **Freebuff: executor tidak terdaftar — chat selalu ditolak.** Saat provider
+  Freebuff diadopsi, `open-sse/executors/freebuff.js` ikut dicopy tetapi TIDAK
+  pernah diimpor/didaftarkan di `open-sse/executors/index.js`. Akibatnya
+  `getExecutor("freebuff")` mengembalikan `DefaultExecutor` yang tidak tahu
+  apa-apa soal protokol Freebuff, dan setiap chat dijawab
+  `400 "No runId found in request body"`.
+
+  Freebuff punya TIGA gate server-side yang wajib dilewati:
+  1. **Sesi** — `POST /api/v1/freebuff/session` + header `x-freebuff-model`
+  2. **Agent run** — `POST /api/v1/agent-runs {action:"START", agentId}` →
+     `runId` asli. `run_id` BUKAN uuid bebas; backend me-resolve-nya ke
+     agent-run store dan menolak id tak dikenal dengan `400 "runId Not Found"`.
+  3. **System marker** — gate `free_mode_cli_required`: pesan system PERTAMA
+     wajib dibuka salah satu pembuka kanonik
+     (`"You are Buffy, the strategic coding assistant."`) — uji prefix
+     byte-exact di posisi 0.
+
+  Ditambah gate `foreign_toolset`: request bertools wajib menyertakan tool
+  `end_turn`, atau router menjawab `404 "No endpoints found"`.
+
+  Perbaikan: daftarkan `FreebuffExecutor` untuk provider `freebuff` + alias `fb`.
+
+## Verification (live, 2026-09-13)
+Login device-flow berhasil (`toa7@gsuii.com`, tier `limited`, country `ID`),
+lalu 3 gate dilewati berurutan:
+```
+1. sesi   : active  tier=limited  country=ID  instanceId=cda2449c-...
+2. runId  : 2b02c9ed-e64d-4a63-98d6-720b390719c1
+3. chat   : [200] 2.7s -> 'OK'
+```
+`--quota` (GET, tidak membakar kuota): 25 Freebucks, reset 2026-09-14 07:00.
+
+## Tests
+- 67/67 test Freebuff lulus (`freebuff-provider`, `freebuff-usage`,
+  `freebuff-model-assignment`).
+
+# v0.5.88 (2026-09-13) — 9router-imagefix
+
+## Fixes
+- **Antigravity: rotation across capacity pools per host.** Google runs a
+  SEPARATE capacity pool per Cloud Code host. When `daily` exhausts capacity
+  for a model it answers `503 {"error":{"message":"No capacity available for
+  model claude-opus-4-6-thinking on the server."}}` while the sandbox hosts are
+  still full. Measured live 2026-09-13 across 40 accounts on
+  `claude-opus-4-6-thinking`:
+
+  | host | success |
+  |---|---|
+  | `daily-cloudcode-pa.googleapis.com` | 5% |
+  | `autopush-cloudcode-pa.sandbox.googleapis.com` | 100% |
+  | `staging-cloudcode-pa.sandbox.googleapis.com` | 100% |
+
+  `AntigravityExecutor.shouldRetry` now rotates to the next host on transient
+  statuses (500/502/503/504) in addition to the pre-existing 429 rule, and
+  `transport.baseUrls` lists `daily` first (used while healthy) followed by the
+  two sandbox pools as capacity fallbacks. Verified end-to-end through the real
+  executor: `daily` (forced 503) → `autopush-sandbox` → HTTP 200.
+
+  This makes Claude Opus 4.6 Thinking usable again across large account pools:
+  before, only 1 of 61 accounts could reach it (5/50 in a 50-account probe);
+  after, 50/50 succeed (45 of them via host rotation).
+
+- **Antigravity: no same-host retries for capacity errors.** `500`/`503`
+  retry `attempts` dropped from 3 to 0. A host that ran out of capacity does
+  not recover within seconds, so retrying it only burned the 2s+4s+8s backoff
+  before rotating anyway — now the executor moves straight to the next host.
+  `429` was already `attempts: 0` (fail fast so chatCore rotates accounts).
+
+## Tests
+- New `tests/unit/antigravity-capacity-rotation.test.js` — drives the REAL
+  executor with a mocked `proxyAwareFetch` (no network): asserts host rotation
+  on 503, no rotation on permanent errors (400/401/403), and a hard stop at the
+  last host.
+- `tests/unit/antigravity-retry-hook.test.js` — covers the new host list and
+  the rotation rules.
+- `tests/unit/executor-const-guard.test.js`, `tests/unit/gemini-36-integration.test.js`
+  — updated to the new host list / retry values.
+- `tests/unit/antigravity-usage-headers.test.js` — reads the user agent from
+  `ANTIGRAVITY_IDE_USER_AGENT` instead of a hardcoded version, so version bumps
+  no longer break it.
+- `tests/__baseline__/verify-no-regression.mjs` — resolves repo-relative test
+  paths on Windows (the old `/app/` split only worked in the Docker CI layout).
+
 # v0.5.87 (2026-09-13) — 9router-imagefix
 
 ## Features

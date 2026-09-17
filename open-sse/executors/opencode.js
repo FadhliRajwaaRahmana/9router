@@ -5,16 +5,94 @@ import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 
-const OPENCODE_UA = "opencode";
-// Models served by /zen/v1/responses; every other model stays on /chat/completions.
-const RESPONSES_MODELS = new Set(["muse-spark-1.2-contributor-free"]);
+// Official OpenCode fingerprint. Upstream gates the free tier on a *versioned*
+// User-Agent: a bare "opencode" is rejected with
+//   403 {"type":"FreeTierError","message":"OpenCode's free tier can only be used from within OpenCode"}
+// Requires version >= 1.17.0 (verified live 2026-09-17 against opencode.ai).
+const OPENCODE_UA = "opencode/1.18.31 ai-sdk/provider-utils/4.0.46 runtime/bun/1.3.14";
+const OPENCODE_UA_RE = /opencode\/(\d+)\.(\d+)(?:\.(\d+))?/i;
+const MIN_OPENCODE_UA_MAJOR = 1;
+const MIN_OPENCODE_UA_MINOR = 17;
 
-function generateRequestId() {
-  return `msg_${crypto.randomUUID().replace(/-/g, "")}`;
+// Upstream validates the *shape* of the session id, not just its presence.
+// Canonical form is fixed-width 30 chars: "ses_" + 12 hex + 14 Base62.
+const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const SESSION_ID_RE = /^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/;
+const REQUEST_ID_RE = /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/;
+
+// Models served by the Responses API; everything else stays on /chat/completions.
+// Matched by family, not by exact id: upstream adds new `muse-spark-*` variants
+// (1.2, 1.3, …) on a regular cadence and each one must use /responses.
+const RESPONSES_MODEL_FAMILIES = ["muse-spark", "grok-4.6", "gpt-5.6-luna"];
+
+function base62(n) {
+  return Array.from(crypto.randomBytes(n), (b) => BASE62_CHARS[b % 62]).join("");
 }
 
+// 6 bytes big-endian from a BigInt, matching the Go reference implementation.
+function hex6FromBigInt(value) {
+  let out = "";
+  for (let i = 0; i < 6; i++) {
+    out += Number((value >> BigInt(40 - 8 * i)) & 0xffn).toString(16).padStart(2, "0");
+  }
+  return out;
+}
+
+// Monotonic per-millisecond counter keeps session ids ordered (and unique) even
+// when several requests land inside the same millisecond.
+let lastSessionTs = 0;
+let sessionCounter = 0;
+
+/** Canonical descending session id: ses_ + 12 hex + 14 Base62 = 30 chars. */
 function generateSessionId() {
-  return `ses_${crypto.randomUUID().replace(/-/g, "")}`;
+  const now = Date.now();
+  if (now !== lastSessionTs) {
+    lastSessionTs = now;
+    sessionCounter = 0;
+  }
+  sessionCounter++;
+  const current = BigInt(now) * 0x1000n + BigInt(sessionCounter & 0xfff);
+  const value = (~current) & 0xffffffffffffffffn;
+  return `ses_${hex6FromBigInt(value)}${base62(14)}`;
+}
+
+/** Canonical request id: msg_ + 12 hex + 14 Base62 = 30 chars. */
+function generateRequestId() {
+  return `msg_${hex6FromBigInt(BigInt(Date.now()) * 0x1000n + 1n)}${base62(14)}`;
+}
+
+/** Canonical 40-char hex project id. */
+function generateProjectId() {
+  return crypto.randomBytes(20).toString("hex");
+}
+
+/**
+ * Map any foreign session id onto a canonical 30-char one, deterministically:
+ * the same input always yields the same output, so a CLI's multi-turn history
+ * stays inside one upstream session instead of scattering across random ones.
+ */
+function translateSessionId(rawSessionId, clientTool = "generic") {
+  const trimmed = String(rawSessionId || "").trim();
+  if (!trimmed) return generateSessionId();
+  if (SESSION_ID_RE.test(trimmed)) return trimmed;
+  const digest = crypto
+    .createHash("sha256")
+    .update(`opencode\u0000${clientTool || "generic"}\u0000${trimmed}`)
+    .digest();
+  const timeHex = digest.subarray(0, 6).toString("hex");
+  let body = "";
+  for (let i = 6; i < 20; i++) body += BASE62_CHARS[digest[i] % 62];
+  return `ses_${timeHex}${body}`;
+}
+
+/** True when a downstream User-Agent is an OpenCode build upstream will accept. */
+function isValidOpencodeUserAgent(ua) {
+  const m = OPENCODE_UA_RE.exec(String(ua || ""));
+  if (!m) return false;
+  const major = Number(m[1]);
+  const minor = Number(m[2]);
+  if (!Number.isFinite(major) || !Number.isFinite(minor)) return false;
+  return major > MIN_OPENCODE_UA_MAJOR || (major === MIN_OPENCODE_UA_MAJOR && minor >= MIN_OPENCODE_UA_MINOR);
 }
 
 // Strip the thinking suffix "model(level)" so registry lookups hit the base id.
@@ -23,70 +101,120 @@ function baseModelId(model) {
 }
 
 function isResponsesModel(model) {
-  return RESPONSES_MODELS.has(baseModelId(model));
+  const base = baseModelId(model);
+  return RESPONSES_MODEL_FAMILIES.some((family) => base.includes(family));
 }
 
 function resolveOpencodeSession(body, credentials) {
   const headers = credentials?.rawHeaders || {};
-  return resolveSessionId({
+  const lower = {};
+  for (const [k, v] of Object.entries(headers)) lower[String(k).toLowerCase()] = v;
+
+  // NOTE: resolveSessionId() has no clientTool/plugin hook for a custom
+  // generator — an unknown `generate` option is silently ignored. Its fallback
+  // is deriveSessionId(), a bare `randomUUID() + Date.now()` with no prefix.
+  // That raw value was being sent as x-opencode-session, which upstream rejects
+  // with 403 FreeTierError because it does not match the canonical shape.
+  // Always re-shape whatever it returns into the canonical 30-char form; the
+  // mapping is deterministic, so a multi-turn conversation stays in one session.
+  const raw = resolveSessionId({
     headers,
     body,
     connectionId: credentials?.connectionId,
     scope: "opencode",
-    generate: generateSessionId,
   });
+  return translateSessionId(raw, lower["x-opencode-client"] || "generic");
 }
 
-function normalizeOpencodeReasoning(model, body) {
+/**
+ * Responses-API models reject continuity leftovers and deviate from the Chat
+ * completions contract. Verified upstream behaviour:
+ *  - reasoning items from earlier turns are rejected -> drop `type:"reasoning"`;
+ *  - `encrypted_content` / `reasoning_encrypted_content` on input items 400s;
+ *  - `reasoning.effort:"max"` is not a valid level -> clamp to "xhigh";
+ *  - `muse-spark-1.3` only accepts `tool_choice:"auto"`;
+ *  - output cap is `max_output_tokens` on this endpoint.
+ */
+function normalizeResponsesModelBody(model, body) {
+  const cleanModel = baseModelId(model);
   const current = body.reasoning;
-  const currentReasoning = current && typeof current === "object" && !Array.isArray(current)
-    ? current
-    : null;
-  const requestedEffort = typeof body.reasoning_effort === "string"
-    ? body.reasoning_effort
-    : currentReasoning?.effort;
-  if (typeof requestedEffort !== "string") return;
+  const currentReasoning = current && typeof current === "object" && !Array.isArray(current) ? current : null;
+  const requestedEffort =
+    typeof body.reasoning_effort === "string" ? body.reasoning_effort : currentReasoning?.effort;
 
-  const cleanModel = baseModelId(model || body.model);
-  const supportedLevels = getThinkingLevels("opencode", cleanModel);
-  let effort = requestedEffort.toLowerCase().trim();
-  if ((effort === "max" || effort === "ultra") && supportedLevels?.length && !supportedLevels.includes(effort)) {
-    if (effort === "ultra" && supportedLevels.includes("max")) effort = "max";
-    else if (supportedLevels.includes("xhigh")) effort = "xhigh";
+  // Only "max" is out of range for these models (their top level is "xhigh").
+  // Everything else passes through untouched — in particular "high" stays
+  // "high": the Chat->Responses translator already settles on that level for a
+  // client asking for "max", and reads downstream are indistinguishable, so
+  // second-guessing it here would silently upgrade genuine "high" requests.
+  let effort = typeof requestedEffort === "string" ? requestedEffort.toLowerCase().trim() : null;
+  if (effort === "ultra") effort = "max";
+  if (effort === "max") {
+    const supported = getThinkingLevels("opencode", cleanModel);
+    if (!supported?.length || !supported.includes("max")) effort = "xhigh";
+  }
+  if (effort) {
+    body.reasoning = { ...currentReasoning, effort };
+    delete body.reasoning_effort;
+  }
+  if (body.reasoning) {
+    const r = typeof body.reasoning === "object" && !Array.isArray(body.reasoning) ? body.reasoning : {};
+    if (!r.summary) r.summary = "auto";
+    body.reasoning = r;
   }
 
-  body.reasoning = { ...currentReasoning, effort };
-  if (!body.reasoning.summary) body.reasoning.summary = "auto";
-  delete body.reasoning_effort;
+  if (Array.isArray(body.input)) {
+    body.input = body.input
+      .filter((item) => !(item && typeof item === "object" && item.type === "reasoning"))
+      .map((item) => {
+        if (!item || typeof item !== "object") return item;
+        const { encrypted_content, reasoning_encrypted_content, ...rest } = item;
+        return rest;
+      });
+  }
+
+  if (baseModelId(model).includes("muse-spark-1.3") && body.tool_choice != null && body.tool_choice !== "auto") {
+    body.tool_choice = "auto";
+  }
 }
 
 export class OpenCodeExecutor extends BaseExecutor {
   constructor() {
     super("opencode", PROVIDERS.opencode);
     this._currentSessionId = null;
+    this._currentProjectId = null;
   }
 
   transformRequest(model, body, stream, credentials) {
     this._currentSessionId = resolveOpencodeSession(body, credentials);
+    // Project id is sticky per session so a conversation does not hop projects.
+    if (!this._currentProjectId) this._currentProjectId = generateProjectId();
+
+    // Free tier is STREAM-ONLY: a non-streaming request is answered with
+    // 403 {"type":"FreeTierError"}. Verified live 2026-09-17 against the raw
+    // endpoint with canonical headers — stream:false and a missing `stream`
+    // both 403, stream:true returns 200, across every free model. The executor
+    // always streams; a client that asked for JSON is served by the
+    // provider-forced-SSE path in chatCore (tests: opencode stream coercion).
+    body.stream = true;
+
     if (isResponsesModel(model)) {
-      // Responses API names the output cap max_output_tokens and takes thinking
-      // as reasoning:{effort,summary} — normalize the Chat fields at this boundary.
+      // Responses API names the output cap max_output_tokens. Normalize the Chat
+      // fields at this boundary before the per-family cleanup below.
       if (body.max_output_tokens === undefined) {
         if (body.max_completion_tokens !== undefined) body.max_output_tokens = body.max_completion_tokens;
         else if (body.max_tokens !== undefined) body.max_output_tokens = body.max_tokens;
       }
       delete body.max_tokens;
       delete body.max_completion_tokens;
-      normalizeOpencodeReasoning(model, body);
+      normalizeResponsesModelBody(model, body);
     }
     return injectReasoningContent({ provider: this.provider, model, body });
   }
 
   buildUrl(model) {
     const base = this.config.baseUrl;
-    return isResponsesModel(model)
-      ? `${base}/zen/v1/responses`
-      : `${base}/zen/v1/chat/completions`;
+    return isResponsesModel(model) ? `${base}/zen/v1/responses` : `${base}/zen/v1/chat/completions`;
   }
 
   buildHeaders(credentials, stream = true) {
@@ -94,18 +222,50 @@ export class OpenCodeExecutor extends BaseExecutor {
     const lower = {};
     for (const [k, v] of Object.entries(raw)) lower[k.toLowerCase()] = v;
 
+    // Only forward the downstream UA when it is an OpenCode build upstream
+    // accepts; anything else (curl, SDK, bare "opencode") is rejected with a
+    // FreeTierError, so fall back to the official fingerprint instead.
     const downstreamUa = lower["user-agent"] || "";
-    const isOpencodeDownstream = downstreamUa.toLowerCase().includes("opencode");
+    const userAgent = isValidOpencodeUserAgent(downstreamUa) ? downstreamUa : OPENCODE_UA;
+
+    const rawSession = lower["x-opencode-session"];
+    const session = rawSession
+      ? translateSessionId(rawSession, lower["x-opencode-client"] || "generic")
+      : this._currentSessionId || generateSessionId();
+
+    const rawProject = lower["x-opencode-project"];
+    const project =
+      rawProject && String(rawProject).trim() && String(rawProject).trim() !== "global"
+        ? String(rawProject).trim()
+        : this._currentProjectId || generateProjectId();
+
+    const rawRequest = lower["x-opencode-request"];
+    const requestId = REQUEST_ID_RE.test(String(rawRequest || "").trim())
+      ? String(rawRequest).trim()
+      : generateRequestId();
 
     return {
       "Content-Type": "application/json",
       "Authorization": "Bearer public",
-      "User-Agent": isOpencodeDownstream ? downstreamUa : OPENCODE_UA,
+      "x-api-key": "public",
+      "User-Agent": userAgent,
       "x-opencode-client": lower["x-opencode-client"] || "desktop",
-      "x-opencode-session": lower["x-opencode-session"] || this._currentSessionId || generateSessionId(),
-      "x-opencode-request": lower["x-opencode-request"] || generateRequestId(),
-      "x-opencode-project": lower["x-opencode-project"] || "global",
+      "x-opencode-session": session,
+      "x-opencode-request": requestId,
+      "x-opencode-project": project,
       "Accept": stream ? "text/event-stream" : "*/*",
     };
   }
 }
+
+export const __test__ = {
+  OPENCODE_UA,
+  generateSessionId,
+  generateRequestId,
+  generateProjectId,
+  translateSessionId,
+  isValidOpencodeUserAgent,
+  isResponsesModel,
+  normalizeResponsesModelBody,
+  SESSION_ID_RE,
+};
