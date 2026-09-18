@@ -25,8 +25,13 @@ describe("Antigravity usage headers", () => {
 
     // loadCodeAssist + fetchAvailableModels + retrieveUserQuotaSummary
     expect(proxyAwareFetch).toHaveBeenCalledTimes(3);
+    // Ambil UA dari sumbernya, jangan hardcode versi — fingerprint IDE
+    // sengaja dinaikkan mengikuti rilis Antigravity (lihat providers/shared.js),
+    // dan test yang mengunci string mentah akan usang di tiap bump.
+    const { ANTIGRAVITY_IDE_USER_AGENT } =
+      await import("../../open-sse/providers/shared.js");
     for (const [, options] of proxyAwareFetch.mock.calls) {
-      expect(options.headers["User-Agent"]).toBe("antigravity/ide/2.1.1 darwin/arm64");
+      expect(options.headers["User-Agent"]).toBe(ANTIGRAVITY_IDE_USER_AGENT);
       expect(options.headers).not.toHaveProperty("x-request-source");
     }
   });

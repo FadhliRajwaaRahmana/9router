@@ -68,8 +68,51 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
   });
 
   it("registry uses the daily IDE cloudcode host and user agent", () => {
-    expect(antigravity.transport.baseUrls).toEqual(["https://daily-cloudcode-pa.googleapis.com"]);
+    // Host resmi IDE harus tetap PERTAMA (dipakai selama pool-nya sehat).
+    expect(antigravity.transport.baseUrls[0]).toBe("https://daily-cloudcode-pa.googleapis.com");
     expect(antigravity.transport.headers["User-Agent"]).toBe("antigravity/ide/2.11.0 darwin/arm64");
+  });
+
+  it("registry lists the sandbox capacity pools as fallback hosts", () => {
+    // Google menjalankan pool kapasitas TERPISAH per host. Saat `daily`
+    // kehabisan kapasitas untuk sebuah model (503 "No capacity available"),
+    // host sandbox masih penuh — terukur live 2026-09-13: daily 5% sukses,
+    // kedua sandbox 100% sukses pada 40 akun.
+    expect(antigravity.transport.baseUrls).toEqual([
+      "https://daily-cloudcode-pa.googleapis.com",
+      "https://autopush-cloudcode-pa.sandbox.googleapis.com",
+      "https://staging-cloudcode-pa.sandbox.googleapis.com",
+    ]);
+  });
+
+  it("rotates host on capacity-exhaustion statuses but not on permanent errors", () => {
+    const exec = new AntigravityExecutor();
+    const last = exec.getFallbackCount() - 1;
+
+    // Status transien -> maju ke host berikutnya.
+    for (const status of [500, 502, 503, 504]) {
+      expect(exec.shouldRetry(status, 0)).toBe(true);
+    }
+    // 429 tetap berperilaku seperti sebelumnya.
+    expect(exec.shouldRetry(429, 0)).toBe(true);
+
+    // Di host terakhir tidak ada tujuan rotasi lagi.
+    for (const status of [429, 500, 502, 503, 504]) {
+      expect(exec.shouldRetry(status, last)).toBe(false);
+    }
+
+    // Error permanen tidak boleh memutar host — biar chatCore yang ganti akun.
+    for (const status of [400, 401, 403, 404]) {
+      expect(exec.shouldRetry(status, 0)).toBe(false);
+    }
+  });
+
+  it("registry disables same-host retries so a capacity-dead host is abandoned immediately", () => {
+    // attempts: 0 -> langsung lompat ke host berikutnya, tanpa backoff
+    // 2s+4s+8s di host yang toh tidak akan sembuh dalam hitungan detik.
+    expect(antigravity.transport.retry["500"].attempts).toBe(0);
+    expect(antigravity.transport.retry["503"].attempts).toBe(0);
+    expect(antigravity.transport.retry["429"].attempts).toBe(0);
   });
 
   it("buildHeaders matches official IDE stream headers", () => {
