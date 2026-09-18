@@ -80,6 +80,38 @@ export const ANTHROPIC_COMPAT_BASE = "https://api.anthropic.com/v1";
 // intentionally matching the IDE client, not the server host.
 export const ANTIGRAVITY_IDE_VERSION = "2.11.0";
 export const ANTIGRAVITY_IDE_BASE_URL = "https://daily-cloudcode-pa.googleapis.com";
+
+/**
+ * Antigravity inference hosts, in fallback order.
+ *
+ * Google menjalankan beberapa pool kapasitas yang TERPISAH per host. Saat
+ * `daily` kehabisan kapasitas untuk model tertentu (503 "No capacity
+ * available for model …"), pool sandbox masih penuh — diukur live
+ * 2026-09-13 dengan 40 akun:
+ *
+ *   daily-cloudcode-pa.googleapis.com              →  5% sukses (503)
+ *   autopush-cloudcode-pa.sandbox.googleapis.com   → 100% sukses
+ *   staging-cloudcode-pa.sandbox.googleapis.com    → 100% sukses
+ *
+ * Karena itu `daily` tetap ditaruh pertama (host resmi IDE, dipakai selama
+ * sehat) dan sandbox jadi cadangan saat 503. Ketiga host melayani task yang
+ * sama dan menerima body/header identik.
+ *
+ * PENTING: `preprod-cloudcode-pa.sandbox` mengembalikan 403 untuk model ini
+ * dan `cloudcode-pa.googleapis.com` (prod) mengembalikan 429 — keduanya
+ * SENGAJA tidak didaftarkan.
+ */
+export const ANTIGRAVITY_IDE_FALLBACK_BASE_URLS = [
+  "https://autopush-cloudcode-pa.sandbox.googleapis.com",
+  "https://staging-cloudcode-pa.sandbox.googleapis.com",
+];
+
+/** Semua host inference Antigravity, urut prioritas. */
+export const ANTIGRAVITY_IDE_BASE_URLS = [
+  ANTIGRAVITY_IDE_BASE_URL,
+  ...ANTIGRAVITY_IDE_FALLBACK_BASE_URLS,
+];
+
 export const ANTIGRAVITY_IDE_USER_AGENT = `antigravity/ide/${ANTIGRAVITY_IDE_VERSION} darwin/arm64`;
 
 // Antigravity OAuth client credentials (public CLI client — duplicated in usage.js + src/lib/oauth)

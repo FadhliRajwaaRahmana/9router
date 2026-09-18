@@ -1,4 +1,4 @@
-import { ANTIGRAVITY_IDE_BASE_URL, ANTIGRAVITY_IDE_USER_AGENT, ANTIGRAVITY_OAUTH_CLIENT } from "../shared.js";
+import { ANTIGRAVITY_IDE_BASE_URL, ANTIGRAVITY_IDE_BASE_URLS, ANTIGRAVITY_IDE_USER_AGENT, ANTIGRAVITY_OAUTH_CLIENT } from "../shared.js";
 
 export default {
   id: "antigravity",
@@ -19,7 +19,10 @@ export default {
   category: "oauth",
   serviceKinds: ["llm", "image", "webSearch"],
   transport: {
-    baseUrls: [ANTIGRAVITY_IDE_BASE_URL],
+    // Host inference berurutan: `daily` resmi dulu, lalu pool sandbox saat
+    // `daily` kehabisan kapasitas (503 "No capacity available for model …").
+    // Pool kapasitas Google TERPISAH per host — lihat ANTIGRAVITY_IDE_BASE_URLS.
+    baseUrls: ANTIGRAVITY_IDE_BASE_URLS,
     format: "antigravity",
     headers: {
       "User-Agent": ANTIGRAVITY_IDE_USER_AGENT,
@@ -31,10 +34,16 @@ export default {
         attempts: 0,
       },
       "500": {
-        attempts: 3,
+        // 0 attempts = JANGAN retry host yang sama; langsung maju ke host
+        // berikutnya di `baseUrls` (lihat AntigravityExecutor.shouldRetry).
+        // Host kapasitas-habis tidak sembuh dalam hitungan detik, jadi retry
+        // di host yang sama hanya membuang waktu sebelum pindah host.
+        attempts: 0,
       },
       "503": {
-        attempts: 3,
+        // Idem untuk 503 "No capacity available for model …": pool kapasitas
+        // Google per-host, bukan per-akun. Rotasi host, bukan retry.
+        attempts: 0,
       },
     },
     usage: {

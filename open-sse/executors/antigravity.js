@@ -164,6 +164,28 @@ export class AntigravityExecutor extends BaseExecutor {
     return `${baseUrl}/v1internal:${action}`;
   }
 
+  /**
+   * Rotasi host saat pool kapasitas host ini habis.
+   *
+   * BaseExecutor.shouldRetry hanya memutar URL pada 429, padahal Antigravity
+   * menjawab 503 {"error":{"message":"No capacity available for model …"}}
+   * ketika pool kapasitas MODEL di host tersebut kelelahan — bukan quota akun.
+   * Google menjalankan pool terpisah per host, jadi host berikutnya di
+   * ANTIGRAVITY_IDE_BASE_URLS sering masih penuh.
+   *
+   * Terukur live 2026-09-13 (40 akun, claude-opus-4-6-thinking):
+   *   daily → 5% sukses    autopush-sandbox → 100%    staging-sandbox → 100%
+   *
+   * Baseline 429 tetap dipertahankan supaya perilaku lama tidak berubah.
+   * Hanya status transien di ANTIGRAVITY_TRANSIENT_STATUSES (500/502/503/504)
+   * yang ikut memicu rotasi host.
+   */
+  shouldRetry(status, urlIndex) {
+    if (super.shouldRetry(status, urlIndex)) return true;
+    if (urlIndex + 1 >= this.getFallbackCount()) return false;
+    return ANTIGRAVITY_TRANSIENT_STATUSES.has(status);
+  }
+
   // sessionId comes from transformRequest output; base.execute runs transformRequest before
   // buildHeaders, so we read it from instance state cached there (fallback: explicit arg).
   buildHeaders(credentials, stream = true, sessionId = null) {
