@@ -109,4 +109,52 @@ describe("OpenCode Free endpoint routing", () => {
     // The registry flag drives chatCore's SSE->JSON conversion for such clients.
     expect(opencode.forceStream).toBe(true);
   });
+
+  // Fourth upstream gate (verified live 2026-09-18): the free tier fingerprints
+  // the official agentic client by the file-search quartet. 0-3 of these names
+  // → 403 FreeTierError; the quartet plus any extras → 200. Plain chat callers
+  // send no tools, so without injection every such request 403s.
+  it("injects the file-search tool quartet on Chat bodies", () => {
+    const executor = new OpenCodeExecutor();
+    const body = { model: "big-pickle", messages: [{ role: "user", content: "hi" }] };
+    executor.transformRequest("big-pickle", body, true, {});
+
+    const names = body.tools.map((t) => t.function.name).sort();
+    expect(names).toEqual(["bash", "glob", "grep", "read"]);
+    for (const tool of body.tools) {
+      expect(tool.type).toBe("function");
+      expect(tool.function.parameters).toEqual({ type: "object", properties: {} });
+    }
+  });
+
+  it("keeps caller tools verbatim and only appends the missing quartet names", () => {
+    const executor = new OpenCodeExecutor();
+    const body = {
+      model: "big-pickle",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [
+        { type: "function", function: { name: "my_tool", description: "mine", parameters: { type: "object", properties: {} } } },
+        { type: "function", function: { name: "bash", description: "punyaku", parameters: { type: "object", properties: {} } } },
+      ],
+    };
+    executor.transformRequest("big-pickle", body, true, {});
+
+    const names = body.tools.map((t) => t.function.name);
+    expect(names).toEqual(["my_tool", "bash", "glob", "grep", "read"]);
+    // Caller's own `bash` declaration must survive untouched, not be replaced.
+    expect(body.tools[1].function.description).toBe("punyaku");
+  });
+
+  it("injects the quartet in Responses flat shape on the Responses endpoint", () => {
+    const executor = new OpenCodeExecutor();
+    const body = { input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }] };
+    executor.transformRequest("muse-spark-1.3-contributor-free", body, true, {});
+
+    const names = body.tools.map((t) => t.name).sort();
+    expect(names).toEqual(["bash", "glob", "grep", "read"]);
+    for (const tool of body.tools) {
+      expect(tool.type).toBe("function");
+      expect(tool.function).toBeUndefined(); // flat shape, not nested
+    }
+  });
 });

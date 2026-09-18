@@ -25,8 +25,61 @@ const REQUEST_ID_RE = /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/;
 // (1.2, 1.3, …) on a regular cadence and each one must use /responses.
 const RESPONSES_MODEL_FAMILIES = ["muse-spark", "grok-4.6", "gpt-5.6-luna"];
 
+// Fourth upstream gate (verified live 2026-09-18): the free tier fingerprints
+// the official agentic client by the file-search tool quartet. A request that
+// carries 0-3 of these names is rejected with 403 FreeTierError even when the
+// UA, session shape and streaming flag are all correct; the quartet plus ANY
+// extras returns 200. Bisection against opencode.ai/zen/v1/chat/completions:
+//
+//   no tools / [] / 3-of-4 / 10 fake names  -> 403
+//   {bash,glob,grep,read}                   -> 200
+//   quartet + 5 fakes / quartet + edit,write -> 200
+//
+// Missing declarations are appended as no-op tools the model may ignore;
+// caller tools are preserved verbatim. Re-bisection is a one-line change here.
+const OPENCODE_FINGERPRINT_TOOLS = ["bash", "glob", "grep", "read"];
+
 function base62(n) {
   return Array.from(crypto.randomBytes(n), (b) => BASE62_CHARS[b % 62]).join("");
+}
+
+function toolNameOf(tool) {
+  if (!tool || typeof tool !== "object" || Array.isArray(tool)) return "";
+  const fn = tool.function && typeof tool.function === "object" && !Array.isArray(tool.function) ? tool.function : null;
+  const raw = typeof tool.name === "string" ? tool.name : typeof fn?.name === "string" ? fn.name : "";
+  return raw.trim();
+}
+
+/**
+ * Append any missing fingerprint tool to `body.tools`.
+ * `shape` selects the declaration format: Chat Completions nests the spec under
+ * `function`, the Responses API keeps it flat.
+ */
+function ensureFingerprintTools(body, shape = "chat") {
+  if (!body || typeof body !== "object") return;
+  const present = new Set();
+  if (Array.isArray(body.tools)) {
+    for (const tool of body.tools) {
+      const name = toolNameOf(tool);
+      if (name) present.add(name);
+    }
+  } else {
+    body.tools = [];
+  }
+  for (const name of OPENCODE_FINGERPRINT_TOOLS) {
+    if (present.has(name)) continue;
+    const spec = {
+      name,
+      description: `OpenCode built-in ${name} tool`,
+      parameters: { type: "object", properties: {} },
+    };
+    body.tools.push(
+      shape === "responses"
+        ? { type: "function", ...spec }
+        : { type: "function", function: spec }
+    );
+    present.add(name);
+  }
 }
 
 // 6 bytes big-endian from a BigInt, matching the Go reference implementation.
@@ -208,6 +261,13 @@ export class OpenCodeExecutor extends BaseExecutor {
       delete body.max_tokens;
       delete body.max_completion_tokens;
       normalizeResponsesModelBody(model, body);
+      // The same tool-quartet gate applies on /responses; only the declaration
+      // shape differs (flat instead of nested under `function`).
+      ensureFingerprintTools(body, "responses");
+    } else {
+      // Plain chat callers usually send no tools at all, which upstream answers
+      // with 403 — inject the quartet so the request looks like the official client.
+      ensureFingerprintTools(body, "chat");
     }
     return injectReasoningContent({ provider: this.provider, model, body });
   }

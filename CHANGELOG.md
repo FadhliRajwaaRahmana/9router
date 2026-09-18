@@ -1,3 +1,54 @@
+# v0.5.91 (2026-09-18) — 9router-imagefix
+
+## Fixes
+- **OpenCode Free: gate keempat — tool quartet. `403 FreeTierError` masih
+  berulang meski UA, session, dan streaming sudah benar.** Upstream
+  mem-fingerprint klien agentik resmi lewat **empat tool pencarian berkas**.
+  Request yang membawa 0–3 dari nama itu ditolak, bahkan ketika tiga gate
+  lainnya sudah lolos. Bisection langsung ke
+  `opencode.ai/zen/v1/chat/completions` (UA + session kanonik konstan):
+
+  | permintaan | hasil |
+  |---|---|
+  | tanpa tools | 403 |
+  | `tools: []` | 403 |
+  | 3 dari 4 (`bash,glob,grep`) | 403 |
+  | 10 nama palsu | 403 |
+  | `{bash,glob,grep,read}` | **200** |
+  | quartet + 5 nama palsu | **200** |
+  | quartet + `edit,write,webfetch` | **200** |
+
+  Perbaikan: `ensureFingerprintTools()` menyisipkan deklarasi yang belum ada
+  sebagai no-op tool (model boleh mengabaikannya). Tool milik pemanggil
+  dipertahankan apa adanya — hanya nama yang belum ada yang ditambahkan.
+  Berlaku di kedua jalur: bentuk bersarang `function` untuk
+  `/chat/completions`, dan bentuk datar untuk `/responses`.
+
+  Ini kasus paling umum: klien chat biasa tidak mengirim tools sama sekali,
+  jadi **setiap** request semacam itu 403 sebelum perbaikan ini.
+
+## Verification (live, 2026-09-18)
+```
+tanpa tools klien   -> 200  tools=[bash,glob,grep,read]
+mimo-v2.5-free      -> 200  tools=[bash,glob,grep,read]
+ling-3.0-flash-fin  -> 200  tools=[bash,glob,grep,read]
++ 2 tool klien      -> 200  tools=[my_tool,bash,glob,grep,read]
+```
+Tool milik pemanggil tidak tertimpa (uji memastikan deskripsi asli bertahan).
+
+## Tests
+- 17/17 `executor-const-guard` (3 test gate baru), 29/29 lintas 3 suite
+  OpenCode. 0 kegagalan terkait OpenCode di seluruh suite.
+
+## Catatan
+Dua PR upstream ditinjau sebagai rujukan: #4128 (UA + session) dan #4132
+(quartet + streaming). #4132 **tidak dapat diterapkan apa adanya** — ia
+mengimpor `clampResponsesCallId`, `coerceResponsesArguments`, dan
+`coerceResponsesOutput` dari `translator/formats/responsesApi.js`, tetapi
+ketiga helper itu tidak ada di repo dan PR tersebut tidak menambahkannya.
+Hanya gate quartet yang diadopsi di sini, karena itulah satu-satunya bagian
+yang terbukti berpengaruh lewat pengujian langsung.
+
 # v0.5.90 (2026-09-17) — 9router-imagefix
 
 ## Fixes
