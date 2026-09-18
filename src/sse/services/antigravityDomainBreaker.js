@@ -6,13 +6,32 @@
  * permanent 400/401/403 for EVERY account on that domain. Testing them one
  * by one costs N × timeout before the router reaches a healthy domain.
  *
- * This module auto-detects any domain that is dying and bulk-disables the
- * entire domain in one write, so the next getProviderCredentials() call
- * skips it entirely (< 50 ms).
+ * This module auto-detects a domain that is dying and bulk-disables it so the
+ * next getProviderCredentials() call skips it entirely (< 50 ms).
  *
  * Safe: gmail.com / googlemail.com are whitelisted — only per-account lock
  * ever applies to them. Threshold is adaptive so a single typo does not
  * nuke a healthy domain.
+ *
+ * PER-ACCOUNT VERIFICATION (added after a live false-positive):
+ *
+ * The ratio heuristic alone bulk-disabled 60 HEALTHY accounts. A seller had
+ * delivered two batches on the same domain — 60 `hww*` accounts that Google
+ * had deleted, and 60 `zvc*` accounts that were brand new and working. The
+ * dead batch pushed the domain past the 30% threshold, so the breaker swept
+ * the live batch with it. Verified afterwards by refreshing every token
+ * directly against Google: 60/60 of the "disabled" accounts returned a valid
+ * access_token.
+ *
+ * The lesson: a domain is a BILLING grouping, not a proxy for "this account
+ * is dead". Sellers ship multiple batches on one domain, so a dead batch says
+ * nothing about its neighbours.
+ *
+ * The ratio still earns its keep as a TRIGGER — it says "this domain is worth
+ * checking". What it must not do is decide WHO is dead. That call now goes to
+ * Google: each candidate's refresh token is exchanged, and only the ones that
+ * actually fail are disabled. Live accounts keep working, and the breaker
+ * still collapses a genuinely dead domain in one pass.
  */
 import { getProviderConnections, updateProviderConnection, getSettings } from "@/lib/localDb";
 import * as log from "../utils/logger.js";
@@ -57,6 +76,65 @@ export function isPermanentAntigravityAuthFailure(status, errorText) {
   return PERMANENT_AUTH_PATTERNS.some((re) => re.test(text));
 }
 
+// How many accounts to verify concurrently. Token exchange is a small POST, so
+// a modest fan-out keeps a 120-account domain under a few seconds without
+// tripping Google's per-client rate limits.
+const VERIFY_CONCURRENCY = 8;
+// Per-account timeout. A refresh that takes longer than this is treated as
+// "unknown", NOT "dead" — see the conservative rule in verifyAccounts.
+const VERIFY_TIMEOUT_MS = 15_000;
+
+/**
+ * Ask Google whether each candidate account is actually dead.
+ *
+ * A refresh-token exchange is the cheapest possible probe: it spends no
+ * inference quota and Google answers definitively — `invalid_grant` with
+ * "Account has been deleted" means the account is gone, while a 200 with an
+ * access_token means it is alive and simply had a bad moment.
+ *
+ * Returns a Map of connectionId -> true (dead) / false (alive). Accounts that
+ * could not be reached are ABSENT from the map, and the caller must treat
+ * absent as alive — disabling an account because our network hiccuped would
+ * recreate the very bug this function exists to fix.
+ *
+ * @param {Array<{id: string, email: string, refreshToken?: string}>} accounts
+ * @param {object|null} refreshFn - injectable for tests
+ * @returns {Promise<Map<string, boolean>>}
+ */
+export async function verifyAccountsAlive(accounts, refreshFn = null) {
+  const out = new Map();
+  const queue = [...accounts];
+  const doRefresh = refreshFn || (async (creds) => {
+    const { refreshTokenByProvider } = await import("open-sse/services/tokenRefresh.js");
+    return refreshTokenByProvider("antigravity", creds, null);
+  });
+
+  async function worker() {
+    while (queue.length) {
+      const acct = queue.shift();
+      if (!acct?.refreshToken) continue; // no token to test — leave unjudged
+      try {
+        const refreshed = await Promise.race([
+          doRefresh({ refreshToken: acct.refreshToken, email: acct.email }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("verify timeout")), VERIFY_TIMEOUT_MS)),
+        ]);
+        // A returned access_token proves the account is alive.
+        out.set(acct.id, !refreshed?.accessToken);
+      } catch (e) {
+        // Definitive rejections only. Anything else (timeout, network, 5xx)
+        // stays unjudged so the caller keeps the account.
+        const msg = String(e?.message || e || "");
+        if (/invalid_grant|account.*(?:deleted|disabled|suspended|not found)|unauthorized_client/i.test(msg)) {
+          out.set(acct.id, true);
+        }
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(VERIFY_CONCURRENCY, queue.length) }, worker));
+  return out;
+}
+
 /**
  * Called right after a permanent 400/401/403 from the Antigravity executor.
  * Decides whether to bulk-disable an entire dynamic domain.
@@ -73,9 +151,10 @@ export function isPermanentAntigravityAuthFailure(status, errorText) {
  *
  * @param {string} email - failed account email
  * @param {string} provider - must be "antigravity"
+ * @param {{refreshFn?: Function}} [opts] - refreshFn injectable for tests
  * @returns {Promise<{ broken: boolean, domain: string, disabledCount: number }>}
  */
-export async function maybeBreakAntigravityDomain(email, provider) {
+export async function maybeBreakAntigravityDomain(email, provider, opts = {}) {
   const domain = extractDomain(email);
   if (!domain) return { broken: false, domain: "", disabledCount: 0 };
   if (provider && provider !== "antigravity") return { broken: false, domain, disabledCount: 0 };
@@ -121,14 +200,37 @@ export async function maybeBreakAntigravityDomain(email, provider) {
     return { broken: false, domain, disabledCount: 0 };
   }
 
-  // Mark broken so we don't hammer the DB for the same domain
+  // The threshold says "this domain is worth checking" — it does NOT say which
+  // accounts are dead. Verify against Google before writing anything: a domain
+  // is a billing grouping, and sellers ship multiple batches on one domain, so
+  // a dead batch must not take its live neighbours down with it.
+  let verdicts;
+  try {
+    verdicts = await verifyAccountsAlive(allForDomain, opts?.refreshFn || null);
+  } catch {
+    // Verification itself failed — do NOT disable on a guess.
+    log.warn("AG_DOMAIN_BREAKER", `${domain} | verification failed; leaving ${total} accounts active`);
+    return { broken: false, domain, disabledCount: 0 };
+  }
+
+  const dead = allForDomain.filter((c) => verdicts.get(c.id) === true);
+  const alive = allForDomain.filter((c) => verdicts.get(c.id) === false);
+  const unknown = allForDomain.filter((c) => !verdicts.has(c.id));
+
+  if (!dead.length) {
+    log.info("AG_DOMAIN_BREAKER", `${domain} | threshold hit but 0/${total} accounts failed verification — not disabling`);
+    return { broken: false, domain, disabledCount: 0 };
+  }
+
+  // Only now do we treat the domain as broken — and only for the accounts
+  // Google actually rejected.
   brokenDomains.add(domain);
 
   let disabledCount = 0;
   const reason = `domain_dead:${domain}`;
   const nowIso = new Date().toISOString();
 
-  for (const c of allForDomain) {
+  for (const c of dead) {
     try {
       const data = c.data && typeof c.data === "object" ? { ...c.data } : {};
       data.disabledReason = reason;
@@ -137,7 +239,7 @@ export async function maybeBreakAntigravityDomain(email, provider) {
         isActive: false,
         data,
         testStatus: "unavailable",
-        lastError: `Domain ${domain} auto-disabled: ${deadCount}/${allWithInactive.length} accounts permanent 400`,
+        lastError: `Domain ${domain} auto-disabled: ${dead.length}/${total} accounts failed token verification`,
         errorCode: 400,
         lastErrorAt: nowIso,
       });
@@ -147,11 +249,11 @@ export async function maybeBreakAntigravityDomain(email, provider) {
     }
   }
 
-  // Also mark the originally failed account if it wasn't in isActive:true set
-  // (it was, but be safe)
-
-  log.warn("AG_DOMAIN_BREAKER", `${domain} | ${deadCount}/${allWithInactive.length} permanent 400 -> bulk-disabled ${disabledCount} accounts (${reason})`);
-  return { broken: true, domain, disabledCount };
+  log.warn(
+    "AG_DOMAIN_BREAKER",
+    `${domain} | verified ${total} accounts: ${dead.length} dead, ${alive.length} alive (kept), ${unknown.length} unknown (kept) -> disabled ${disabledCount} (${reason})`
+  );
+  return { broken: true, domain, disabledCount, deadCount: dead.length, aliveCount: alive.length, unknownCount: unknown.length };
 }
 
 // Test-only: reset in-memory set
