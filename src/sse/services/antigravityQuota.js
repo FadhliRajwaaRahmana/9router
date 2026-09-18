@@ -135,12 +135,45 @@ async function _doRefresh(connectionId, accessToken, providerSpecificData, now) 
  * Called from chat handler error path.
  * @returns {number|null} resetAt timestamp ms (for resetsAtMs passthrough) or null
  */
+/**
+ * Resolve the quota entry that actually governs `model`.
+ *
+ * Antigravity meters quota per POOL, not per model: every `gemini-*` model
+ * shares one pool, every `claude-*`/`gpt-*` model shares another. A free-tier
+ * account reports only `gemini_weekly` and `claude_gpt_weekly` — there are no
+ * per-model entries at all. An exact `quotas[model]` lookup therefore missed,
+ * so an exhausted pool looked "unknown" and the caller kept probing other
+ * models in the same dead pool.
+ *
+ * Order: exact model → family bucket → any bucket whose name contains the
+ * family token. Returns undefined when nothing matches, preserving the
+ * existing "unknown" behaviour rather than guessing.
+ */
+export function resolveQuotaForModel(quotas, model) {
+  if (!quotas || !model) return undefined;
+  if (quotas[model] !== undefined) return quotas[model];
+
+  const m = String(model).toLowerCase();
+  const family = m.startsWith("gemini") || m.includes("imagen")
+    ? "gemini"
+    : (m.startsWith("claude") || m.startsWith("gpt") ? "claude" : null);
+  if (!family) return undefined;
+
+  for (const [key, value] of Object.entries(quotas)) {
+    const k = key.toLowerCase();
+    if (family === "gemini" && k.includes("gemini")) return value;
+    if (family === "claude" && (k.includes("claude") || k.includes("gpt") || k.includes("3p"))) return value;
+  }
+  return undefined;
+}
+
 export async function handleAntigravityQuotaError(connectionId, status, model, accessToken, providerSpecificData) {
   log.info("AG_QUOTA", `${connectionId.slice(0, 8)} | ${status} on ${model} — refreshing quota`);
 
   // Throttle applies to error paths too: one quota request per account/30s.
   // The first 409/429 populates cache; concurrent or repeated errors reuse it.
-  const quota = (await refreshAntigravityQuota(connectionId, accessToken, providerSpecificData))?.[model];
+  const refreshed = await refreshAntigravityQuota(connectionId, accessToken, providerSpecificData);
+  const quota = resolveQuotaForModel(refreshed, model);
 
   // Strike breaker: count every 429 whose quota reading is either optimistic
   // (remaining > 0) or unavailable (quota API 403/error). 3 within the window

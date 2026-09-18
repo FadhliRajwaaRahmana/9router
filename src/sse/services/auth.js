@@ -296,7 +296,12 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   }
   if (!shouldFallback) return { shouldFallback: false, cooldownMs: 0 };
 
-  const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
+  // Kept for `lastError` in the DB and the console line, not for cooldown
+  // decisions (those already happened above via resetsAtMs). 100 chars cut
+  // Google's quota 429 mid-JSON, so the dashboard showed a truncated blob with
+  // no clue which pool was exhausted. 300 keeps the reason/model suffix that
+  // parseError appends while staying short enough for the dashboard cell.
+  const reason = typeof errorText === "string" ? errorText.slice(0, 300) : "Provider error";
   const lockUpdate = buildModelLockUpdate(githubResetAtMs ? null : model, cooldownMs);
 
   await updateProviderConnection(connectionId, {

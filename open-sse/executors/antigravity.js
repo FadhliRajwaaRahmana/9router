@@ -9,6 +9,7 @@ import { cleanJSONSchemaForAntigravity } from "../translator/formats/gemini.js";
 import { DEFAULT_THINKING_AG_SIGNATURE } from "../config/defaultThinkingSignature.js";
 import { GEMINI_ROLE } from "../translator/schema/roles.js";
 import { getGeminiThoughtSignatureSync } from "../services/thoughtSignatureStore.js";
+import { extractGoogleQuotaReset } from "../utils/googleQuota.js";
 
 // Sanitize function name: Gemini requires [a-zA-Z_][a-zA-Z0-9_.:\-]{0,63}
 function sanitizeFunctionName(name) {
@@ -513,6 +514,41 @@ export class AntigravityExecutor extends BaseExecutor {
       errorJson?.error,
       bodyText,
     ].filter(Boolean).map(v => typeof v === "string" ? v : JSON.stringify(v)).join("\n");
+  }
+
+  /**
+   * Provider-specific error parsing, called by parseUpstreamError().
+   *
+   * A quota 429 from Cloud Code carries the exact reset moment in
+   * error.details[] — `quotaResetTimeStamp`, `quotaResetDelay`, or
+   * `RetryInfo.retryDelay`. Without this override `resetsAtMs` stayed null and
+   * markAccountUnavailable() fell back to the generic exponential backoff
+   * (2s → 30s), so an account whose quota returns in ~6 days was re-probed
+   * every few seconds for days. Measured on one install: 233 antigravity 429s
+   * over 22h at ~16s each ≈ 70 minutes of dead wall-clock.
+   *
+   * The reset is per model, so callers lock only that model — the account's
+   * other pools (Claude models, other Gemini tiers) stay usable.
+   */
+  parseError(response, bodyText) {
+    if (response?.status !== HTTP_STATUS.RATE_LIMITED || !bodyText) {
+      return super.parseError(response, bodyText);
+    }
+    try {
+      const json = JSON.parse(bodyText);
+      const { resetsAtMs, model, reason } = extractGoogleQuotaReset(json);
+      if (!resetsAtMs) return super.parseError(response, bodyText);
+
+      const base = json?.error?.message || bodyText;
+      const detail = [reason, model].filter(Boolean).join(" ");
+      return {
+        status: response.status,
+        message: detail ? `${base} [${detail}]` : base,
+        resetsAtMs,
+      };
+    } catch {
+      return super.parseError(response, bodyText);
+    }
   }
 
   isTransientAntigravityError(status, message) {

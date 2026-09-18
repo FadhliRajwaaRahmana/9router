@@ -1,3 +1,66 @@
+# v0.5.92 (2026-09-18) — 9router-imagefix
+
+## Fixes
+- **Antigravity: 429 quota reset dibuang, akun mati diprobe ulang terus.** Google
+  mengirim waktu reset presisi di body 429 — tiga cara sekaligus:
+
+  ```json
+  "message": "Individual quota reached. ... Resets in 149h50m20s.",
+  "details": [
+    { "@type": ".../google.rpc.ErrorInfo", "reason": "QUOTA_EXHAUSTED",
+      "metadata": { "model": "gemini-3-flash-agent",
+                    "quotaResetDelay": "149h50m20.179078308s",
+                    "quotaResetTimeStamp": "2026-08-08T17:54:07Z" } },
+    { "@type": ".../google.rpc.RetryInfo", "retryDelay": "539420.179078308s" }
+  ]
+  ```
+
+  Kuota kembali **6,2 hari** lagi dan Google memberitahukannya tiga kali, tapi
+  ketiganya dibuang sebelum sampai ke logika cooldown:
+
+  1. `open-sse/utils/error.js` hanya mengambil `json.error.message` — `details`
+     dibuang total.
+  2. `open-sse/executors/antigravity.js` **tidak punya `parseError`**, jadi
+     `resetsAtMs` tidak pernah terisi. Executor yang punya (`codex`,
+     `gemini-cli`, `grok-cli`, `zed`, `commandcode`, `freebuff`) bekerja benar.
+  3. Akibatnya cooldown jatuh ke backoff generik 2s → 30s, dan akun yang
+     kuotanya kembali 6 hari lagi diprobe ulang tiap beberapa detik.
+
+  Terukur di satu instalasi (PR #3012): **233 429 Antigravity dalam 22 jam
+  @ ~16,4s = ~70 menit wall-clock mati**, semuanya probe ke akun yang sudah
+  memberi tahu kapan mereka akan kembali.
+
+  Perbaikan: helper baru `open-sse/utils/googleQuota.js` yang mem-parse keempat
+  bentuk sinyal (timestamp ISO, Go duration, protobuf Duration, dan fallback
+  dari teks pesan), `AntigravityExecutor.parseError()` yang memakainya, plus
+  `parseUpstreamError()` kini meneruskan `resetsAtMs` bahkan tanpa override
+  executor — supaya tidak ada provider yang diam-diam kehilangan sinyal ini.
+
+- **Antigravity: kuota dihitung per-POOL, bukan per-model.** Semua model
+  `gemini-*` berbagi satu pool, semua `claude-*`/`gpt-*` berbagi pool lain.
+  Akun free-tier hanya melaporkan `gemini_weekly` dan `claude_gpt_weekly` —
+  **tidak ada entri per-model sama sekali** — sehingga lookup
+  `quotas[model]` yang persis selalu meleset dan pool yang habis terlihat
+  "tidak diketahui". Perbaikan: `resolveQuotaForModel()` mencocokkan exact →
+  bucket keluarga → nama bucket (`3p` untuk Claude/GPT), dan mengembalikan
+  `undefined` (bukan menebak) bila tidak ada yang cocok.
+
+- **`MAX_RATE_LIMIT_COOLDOWN_MS` dipotong dari 7 hari (dari 30 menit).**
+  Reset kuota weekly free-tier memang berhari-hari; memotongnya ke 30 menit
+  membuat akun mati diprobe tiap setengah jam sepanjang minggu. `lastError`
+  yang tersimpan juga dinaikkan dari 100 → 300 karakter karena 100 memotong
+  JSON Google di tengah dan dashboard kehilangan info pool mana yang habis.
+
+## Yang TIDAK diadopsi
+- **PR #3986** (`omit requestType:"agent"`) — klaimnya diuji ulang dengan beban
+  ~25K token + 13 tool, 5× bergantian: DENGAN 3,0s (0/5 gagal) vs TANPA 2,2s
+  (0/5 gagal). Selisih 6,6s vs 2,4s di percobaan pertama ternyata hanya warm-up
+  koneksi. **Tidak tereproduksi** — tidak diterapkan.
+
+## Tests
+- `unit/antigravity-quota-pool.test.js` (5) + `unit/antigravity-quota-reset.test.js` (6).
+- 31/31 lintas 5 suite Antigravity. 0 kegagalan terkait Antigravity di suite penuh.
+
 # v0.5.91 (2026-09-18) — 9router-imagefix
 
 ## Fixes
