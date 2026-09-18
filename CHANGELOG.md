@@ -1,4 +1,9 @@
-# v0.5.92 (2026-09-18) — 9router-imagefix
+# v0.5.93 (2026-09-18) — 9router-imagefix
+
+Re-publish dari v0.5.92 dengan isi identik: publish 0.5.92 sempat ditolak npm
+dengan E409 ("Cannot publish over previously staged version"), jadi versi
+dinaikkan ke 0.5.93 dan di-publish ulang. Keduanya ada di registry dengan
+konten yang sama — **pakai 0.5.93** (`latest`).
 
 ## Fixes
 - **Antigravity: 429 quota reset dibuang, akun mati diprobe ulang terus.** Google
