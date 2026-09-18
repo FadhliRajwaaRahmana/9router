@@ -1,3 +1,22 @@
+# v0.5.94 (2026-09-19) — 9router-imagefix
+
+## Fixes
+- **Antigravity: 60 akun sehat ikut dimatikan oleh domain breaker.** Breaker
+  memutuskan siapa yang mati dari RASIO (≥30% akun satu domain gagal → seluruh
+  domain di-bulk-disable), bukan dari verifikasi. Satu penjual mengirim DUA
+  batch di domain yang sama: 60 akun yang sudah dihapus Google, dan 60 akun baru
+  yang berfungsi. Batch mati melewati ambang 30%, lalu breaker menyapu
+  keduanya — pool menyusut jadi 1 akun aktif dari 136.
+
+  Rasio kini hanya jadi PEMICU ("domain ini layak diperiksa"). Yang menentukan
+  siapa mati adalah Google, lewat `verifyAccountsAlive()` yang menukar refresh
+  token tiap kandidat (probe termurah — tidak memakai kuota inference). Akun
+  yang tidak bisa dihubungi (timeout, network error, 5xx) TIDAK dihakimi dan
+  tetap aktif; kalau verifikasi sendiri gagal, tidak ada yang ditulis.
+
+  Terverifikasi pada pool nyata: 63 kandidat diperiksa → 60 hidup (diaktifkan,
+  pool 1 → 61 aktif), 3 mati dibiarkan nonaktif.
+
 # v0.5.93 (2026-09-18) — 9router-imagefix
 
 Re-publish dari v0.5.92 dengan isi identik: publish 0.5.92 sempat ditolak npm
