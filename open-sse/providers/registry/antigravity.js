@@ -29,9 +29,17 @@ export default {
     },
     retry: {
       "429": {
-        // Fail fast on 429 burst rate limits so chatCore immediately rotates
-        // to the next account instead of wasting ~16s retrying the same blocked account.
-        attempts: 0,
+        // Retry di host yang sama, karena 429 burst Cloud Code pulih dalam
+        // MILIDETIK — terukur 2026-09-20: `quotaResetDelay: 162.322081ms`.
+        // Delay diambil dari error.details[] oleh computeRetryDelay, jadi
+        // tidak ada backoff buta. attempts: 2 memberi ruang ~0,2-0,5 detik,
+        // jauh lebih murah daripada membuang request ke akun lain yang juga
+        // sedang burst (dan lebih cepat daripada rotasi host ~3-4 detik).
+        //
+        // 429 yang benar-benar kehabisan kuota tetap ditangani: computeRetryDelay
+        // mengembalikan `false` (veto) bila resetAt > MAX_RETRY_AFTER_MS,
+        // sehingga chatCore langsung merotasi akun.
+        attempts: 2,
       },
       "500": {
         // 0 attempts = JANGAN retry host yang sama; langsung maju ke host

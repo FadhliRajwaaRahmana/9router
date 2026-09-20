@@ -576,13 +576,26 @@ export class AntigravityExecutor extends BaseExecutor {
   parseRetryFromErrorMessage(errorMessage) {
     if (!errorMessage || typeof errorMessage !== "string") return null;
 
-    const match = errorMessage.match(/reset after (\d+h)?(\d+m)?(\d+s)?/i);
+    // Antigravity membalas DUA bentuk pesan yang berbeda:
+    //   kuota mingguan : "Resets in 149h50m20s"
+    //   rate limit     : "Resets in 0s."      ← perhatikan "Resets" (ada 's')
+    //
+    // Pola lama hanya cocok dengan "reset after ...", sehingga bentuk
+    // "Resets in 0s." TIDAK pernah terbaca. Akibatnya 429 burst jatuh ke
+    // backoff eksponensial 2 detik padahal upstream sudah memberi tahu reset
+    // dalam milidetik (RetryInfo.retryDelay). Terukur 2026-09-20: burst 12
+    // request pada satu akun menghasilkan 9x 429 dengan
+    // "quotaResetDelay": "162.322081ms" — akun sehat, hanya perlu ~0,2 detik.
+    const match = errorMessage.match(/resets?\s+(?:in|after)\s+((?:\d+h)?(?:\d+m)?(?:\d+(?:\.\d+)?s)?)/i);
     if (!match) return null;
 
+    const parts = match[1].match(/(\d+)h|(\d+)m|(\d+(?:\.\d+)?)s/gi) || [];
     let totalMs = 0;
-    if (match[1]) totalMs += parseInt(match[1]) * 3600 * 1000; // hours
-    if (match[2]) totalMs += parseInt(match[2]) * 60 * 1000; // minutes
-    if (match[3]) totalMs += parseInt(match[3]) * 1000; // seconds
+    for (const part of parts) {
+      if (/h$/i.test(part)) totalMs += parseInt(part) * 3600 * 1000;
+      else if (/m$/i.test(part)) totalMs += parseInt(part) * 60 * 1000;
+      else if (/s$/i.test(part)) totalMs += parseFloat(part) * 1000;
+    }
 
     return totalMs > 0 ? totalMs : null;
   }
@@ -594,6 +607,44 @@ export class AntigravityExecutor extends BaseExecutor {
       errorJson?.error,
       bodyText,
     ].filter(Boolean).map(v => typeof v === "string" ? v : JSON.stringify(v)).join("\n");
+  }
+
+  /**
+   * Delay retry PERSIS dari error.details[] Cloud Code.
+   *
+   * Pesan manusia membulatkan ke detik — "Resets in 0s." untuk limit yang
+   * sebenarnya pulih dalam 162ms. Field terstruktur menyimpan angka aslinya:
+   *
+   *   RetryInfo.retryDelay        : "0.162322081s"
+   *   ErrorInfo.metadata.quotaResetDelay : "162.322081ms"
+   *
+   * Terukur 2026-09-20 (burst 12x, satu akun, model claude-opus-4-6-thinking):
+   * 9x 429 dengan delay ~162ms. Tanpa pembacaan ini, 429 jatuh ke backoff
+   * eksponensial 2 detik — 12x lebih lama dari yang dibutuhkan upstream.
+   */
+  parseRetryFromDetails(errorJson) {
+    const details = errorJson?.error?.details;
+    if (!Array.isArray(details)) return null;
+
+    const toMs = (raw) => {
+      if (typeof raw !== "string") return null;
+      const ms = raw.endsWith("ms")
+        ? Number.parseFloat(raw)
+        : raw.endsWith("s") ? Number.parseFloat(raw) * 1000 : NaN;
+      return Number.isFinite(ms) && ms > 0 ? Math.ceil(ms) : null;
+    };
+
+    // RetryInfo.retryDelay adalah field kanonik google.rpc untuk waktu retry —
+    // diprioritaskan di atas metadata.quotaResetDelay apa pun urutannya.
+    for (const d of details) {
+      const ms = toMs(d?.retryDelay);
+      if (ms !== null) return ms;
+    }
+    for (const d of details) {
+      const ms = toMs(d?.metadata?.quotaResetDelay);
+      if (ms !== null) return ms;
+    }
+    return null;
   }
 
   /**
@@ -654,9 +705,10 @@ export class AntigravityExecutor extends BaseExecutor {
 
     const errorMessage = this.extractErrorMessage(errorJson, bodyText);
 
-    if (!retryMs) {
-      retryMs = this.parseRetryFromErrorMessage(errorMessage);
-    }
+    // Field terstruktur lebih akurat daripada pesan manusia (yang membulatkan
+    // ke detik dan menampilkan "Resets in 0s." untuk limit sub-detik).
+    if (!retryMs) retryMs = this.parseRetryFromDetails(errorJson);
+    if (!retryMs) retryMs = this.parseRetryFromErrorMessage(errorMessage);
     if (retryMs) return retryMs <= MAX_RETRY_AFTER_MS ? retryMs : false;
 
     if (!this.isTransientAntigravityError(response.status, errorMessage)) return false;

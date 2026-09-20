@@ -104,11 +104,8 @@ export default function AntigravityHostCard() {
         value={mode}
         disabled={saving || !loaded}
         onChange={(e) => save(e.target.value)}
-      >
-        {PRESETS.map((p) => (
-          <option key={p.value} value={p.value}>{p.label}</option>
-        ))}
-      </Select>
+        options={PRESETS.map((p) => ({ value: p.value, label: p.label }))}
+      />
 
       <p className="mt-2 text-sm text-text-muted">{active.hint}</p>
 

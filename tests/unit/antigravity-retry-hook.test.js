@@ -34,6 +34,27 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
     expect(await ag.computeRetryDelay(res(429), 3)).toBe(Math.min(1000 * 2 ** 3, MAX));
   });
 
+  it("membaca pesan burst asli 'Resets in 0s.' (regresi 2026-09-20)", async () => {
+    // Bentuk PERSIS dari upstream. Pola lama `/reset after/` tidak cocok dengan
+    // "Resets in", sehingga 429 burst diperlakukan sebagai backoff 2s padahal
+    // upstream bilang reset dalam 0 detik. Terukur: quotaResetDelay 162ms.
+    const r = res(429, {}, {
+      error: { message: "You have exhausted your capacity on this model. Resets in 0s." },
+    });
+    // 0s → tidak ada durasi positif → null → jatuh ke backoff (bukan salah baca).
+    expect(await ag.parseRetryFromErrorMessage("Resets in 0s.")).toBeNull();
+  });
+
+  it("membaca 'Resets in <d>s' dan bentuk jam/menit", () => {
+    expect(ag.parseRetryFromErrorMessage("Resets in 5s.")).toBe(5000);
+    expect(ag.parseRetryFromErrorMessage("Resets in 1m30s.")).toBe(90000);
+    expect(ag.parseRetryFromErrorMessage("Resets in 2h5m10s")).toBe(2 * 3600 * 1000 + 5 * 60 * 1000 + 10 * 1000);
+    // Bentuk lama harus tetap jalan.
+    expect(ag.parseRetryFromErrorMessage("quota will reset after 3s")).toBe(3000);
+    // Detik pecahan (RetryInfo.retryDelay) tidak boleh bikin NaN.
+    expect(ag.parseRetryFromErrorMessage("Resets in 0.162322081s.")).toBeCloseTo(162.3, 0);
+  });
+
   it("503 without retry info → transient backoff", async () => {
     expect(await ag.computeRetryDelay(res(503), 1)).toBe(2000);
   });
@@ -131,12 +152,53 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
     }
   });
 
-  it("registry disables same-host retries so a capacity-dead host is abandoned immediately", () => {
+  it("registry tidak me-retry host yang kapasitasnya mati (500/503)", () => {
     // attempts: 0 -> langsung lompat ke host berikutnya, tanpa backoff
     // 2s+4s+8s di host yang toh tidak akan sembuh dalam hitungan detik.
     expect(antigravity.transport.retry["500"].attempts).toBe(0);
     expect(antigravity.transport.retry["503"].attempts).toBe(0);
-    expect(antigravity.transport.retry["429"].attempts).toBe(0);
+  });
+
+  it("registry me-retry 429 in-place karena limitnya pulih dalam milidetik", () => {
+    // 429 burst Cloud Code: "quotaResetDelay": "162.322081ms" — terukur
+    // 2026-09-20 pada burst 12x. Membuang request ke akun lain (yang juga
+    // sedang burst) jauh lebih mahal daripada menunggu 162ms.
+    expect(antigravity.transport.retry["429"].attempts).toBeGreaterThan(0);
+  });
+
+  it("membaca RetryInfo.retryDelay & quotaResetDelay dari error.details[]", () => {
+    // Bentuk PERSIS dari upstream — pesan manusianya "Resets in 0s." yang
+    // membulatkan 162ms menjadi nol detik, jadi angka aslinya wajib dibaca
+    // dari field terstruktur.
+    const real = {
+      error: {
+        code: 429,
+        message: "You have exhausted your capacity on this model. Resets in 0s.",
+        status: "RESOURCE_EXHAUSTED",
+        details: [
+          { "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            reason: "RATE_LIMIT_EXCEEDED",
+            metadata: { quotaResetDelay: "162.322081ms" } },
+          { "@type": "type.googleapis.com/google.rpc.RetryInfo",
+            retryDelay: "0.162322081s" },
+        ],
+      },
+    };
+    expect(ag.parseRetryFromDetails(real)).toBe(163); // ceil dari 162.32
+    // retryDelay menang (dicek lebih dulu) — 0.162322081s → 163ms
+    expect(ag.parseRetryFromDetails({ error: { details: [
+      { metadata: { quotaResetDelay: "5s" } },
+      { retryDelay: "0.25s" },
+    ] } })).toBe(250);
+    // Tidak ada details → null (jatuh ke jalur lain).
+    expect(ag.parseRetryFromDetails({ error: { message: "x" } })).toBeNull();
+    expect(ag.parseRetryFromDetails(null)).toBeNull();
+  });
+
+  it("429 dengan resetAt panjang tetap di-veto (biar chatCore rotasi akun)", async () => {
+    // Kuota mingguan habis → jangan retry in-place berulang kali.
+    const r = res(429, {}, { error: { message: "You have exhausted your capacity. Resets in 149h50m20s." } });
+    expect(await ag.computeRetryDelay(r, 1)).toBe(false);
   });
 
   it("buildHeaders matches official IDE stream headers", () => {
