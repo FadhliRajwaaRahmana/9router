@@ -86,7 +86,7 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
     ]);
   });
 
-  it("default daily-only: TIDAK ada rotasi host (perilaku upstream + CLIProxyAPI)", () => {
+  it("mode daily-only eksplisit: TIDAK ada rotasi host (1 host, tidak ada tujuan)", () => {
     // Default sekarang daily-only = 1 host, jadi tidak ada tujuan rotasi.
     // Ini disengaja: 9Router upstream dan CLIProxyAPI sama-sama memakai daily
     // saja dan mengandalkan rotasi AKUN. Host sandbox punya gerbang tambahan
@@ -127,7 +127,7 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
         expect(exec.shouldRetry(status, 0)).toBe(false);
       }
     } finally {
-      setAntigravityHostMode("daily-only");
+      setAntigravityHostMode("all-hosts");
     }
   });
 

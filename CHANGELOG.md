@@ -1,3 +1,41 @@
+# v0.5.98 (2026-09-20) — 9router-imagefix
+
+## Fixes
+- **Antigravity: 503 kapasitas tidak lagi mengunci akun.** `503
+  MODEL_CAPACITY_EXHAUSTED` ("No capacity available for model X on the server")
+  adalah kondisi **HOST**, bukan kesalahan akun — akunnya sehat, Google hanya
+  tidak punya ruang untuk model itu di host tersebut saat ini.
+
+  Mengunci akun karenanya merugikan. Diukur 2026-09-20 pada pool ini:
+  `gemini-3.8-flash` hanya **2/8 sukses di daily** sementara **kedua sandbox
+  8/8**. Dengan perilaku lama, enam dari delapan akun ditandai tidak tersedia
+  karena kondisi yang tidak mereka sebabkan.
+
+  Sekarang: 503 kapasitas → **tidak mengunci**, serahkan ke rotasi host
+  (503 sudah ada di `ANTIGRAVITY_TRANSIENT_STATUSES`), lalu fallback berganti
+  akun dengan anggaran lock akun tetap utuh.
+
+- **Default host diubah ke `all-hosts` (daily dulu, sandbox cadangan).**
+  Versi 0.5.97 memakai `daily-only` sebagai default dengan alasan mengikuti
+  9Router upstream dan CLIProxyAPI. Pengukuran hari ini menunjukkan itu keliru
+  untuk pool ini: tanpa cadangan, `gemini-3.8-flash` gagal 6/8.
+
+  `daily` tetap **selalu pertama** — sandbox hanya dicoba setelah daily
+  menolak, bukan sebagai host utama. `daily-only` tetap tersedia di dropdown
+  bagi yang lebih memilih menghindari sandbox sepenuhnya.
+
+## Notes
+- Rotasi host kini benar-benar maju. Bug `indexOf` di 0.5.97 sudah diperbaiki;
+  verifikasi: daily → autopush → staging → null (sebelumnya selalu kembali ke
+  daily).
+- Dropdown host tetap berlaku tanpa restart.
+
+## Tests
+- 90/90 lintas 8 suite Antigravity. Test rotasi host menguji **kedua mode**
+  eksplisit; test default mengunci urutan daily-first.
+- Lint bersih, build terverifikasi (`Semua host (default)`,
+  `no capacity on this host`, `isCapacity503` ada di bundle).
+
 # v0.5.97 (2026-09-20) — 9router-imagefix
 
 ## Features

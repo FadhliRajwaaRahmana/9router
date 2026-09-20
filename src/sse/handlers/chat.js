@@ -348,6 +348,29 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     if (result.success) return result.response;
 
+    // Antigravity capacity exhaustion (503 MODEL_CAPACITY_EXHAUSTED) is a HOST
+    // condition, not an account fault. The account is healthy; Google simply
+    // has no room for this model on that host right now.
+    //
+    // Locking the account for it is actively harmful: with `daily` refusing
+    // gemini-3.8-flash for 6 of 8 accounts while both sandboxes served 8/8, the
+    // router would burn the whole pool on a condition none of those accounts
+    // caused. Measured live 2026-09-20.
+    //
+    // So: do not lock. Let chatCore's own host rotation handle it (503 is in
+    // ANTIGRAVITY_TRANSIENT_STATUSES), and if every host is out of capacity,
+    // the fallback moves to the next account with its lock budget untouched.
+    const isCapacity503 = provider === "antigravity"
+      && result.status === HTTP_STATUS.SERVICE_UNAVAILABLE
+      && /MODEL_CAPACITY_EXHAUSTED|no capacity available/i.test(String(result.error || ""));
+    if (isCapacity503) {
+      log.warn("FALLBACK", `⇄ ${credentials.connectionName} ${model} no capacity on this host — account NOT locked`);
+      excludeConnectionIds.add(credentials.connectionId);
+      lastError = result.error;
+      lastStatus = result.status;
+      continue;
+    }
+
     // Antigravity 409/429: refresh live quota to get exact resetAt before locking
     let quotaResetMs = null;
     let resetsAtMs = result.resetsAtMs;

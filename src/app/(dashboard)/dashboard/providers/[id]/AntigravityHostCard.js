@@ -6,32 +6,34 @@ import { Card, Select, Badge } from "@/shared/components";
 /**
  * Pemilih host Antigravity.
  *
- * Default `daily-only` mengikuti perilaku 9Router upstream DAN CLIProxyAPI —
- * keduanya memakai `daily` saja dan mengandalkan rotasi AKUN saat gagal, bukan
- * rotasi host. Itu lebih aman karena host sandbox memberlakukan gerbang
- * tambahan: request dengan project yang tidak dikenali ditolak
- * 403 SUBSCRIPTION_REQUIRED (#3501), sementara `daily` menerimanya.
+ * Default `all-hosts`: daily DULU, sandbox sebagai cadangan kapasitas.
  *
- * Preset sandbox tetap disediakan karena kapasitas Google bergeser — pada
- * 2026-09-13 `daily` hanya 5% sukses untuk claude-opus sementara sandbox 100%.
+ * Kenapa bukan daily-only: diukur 2026-09-20, gemini-3.8-flash hanya 2/8 sukses
+ * di daily sementara kedua sandbox 8/8 — tanpa cadangan, enam dari delapan akun
+ * gagal pada model yang sebenarnya tersedia. Sandbox hanya dicoba setelah daily
+ * menolak, bukan sebagai host utama.
+ *
+ * Risiko sandbox: ia menolak request yang membawa project bukan milik akun
+ * tersebut dengan 403 SUBSCRIPTION_REQUIRED (#3501). `daily-only` tersedia bagi
+ * yang lebih memilih menghindari sandbox sepenuhnya.
  */
 const PRESETS = [
   {
     value: "daily-only",
     label: "Daily only",
-    hint: "Host resmi IDE. Paling aman — rotasi akun saat gagal.",
+    hint: "Host resmi IDE saja. Paling sedikit risiko 403, tapi tidak ada cadangan saat daily kehabisan kapasitas.",
     urls: ["daily-cloudcode-pa.googleapis.com"],
   },
   {
     value: "daily-autopush",
     label: "Daily + Autopush",
-    hint: "Tambah satu pool sandbox sebagai cadangan kapasitas.",
+    hint: "Daily dulu, satu pool sandbox sebagai cadangan kapasitas.",
     urls: ["daily-cloudcode-pa.googleapis.com", "autopush-cloudcode-pa.sandbox.googleapis.com"],
   },
   {
     value: "all-hosts",
-    label: "Semua host (daily + 2 sandbox)",
-    hint: "Kapasitas maksimum. Sandbox bisa menolak 403 #3501 pada sebagian akun.",
+    label: "Semua host (default)",
+    hint: "Daily dulu, lalu dua pool sandbox. Kapasitas maksimum.",
     urls: [
       "daily-cloudcode-pa.googleapis.com",
       "autopush-cloudcode-pa.sandbox.googleapis.com",
@@ -41,7 +43,7 @@ const PRESETS = [
 ];
 
 export default function AntigravityHostCard() {
-  const [mode, setMode] = useState("daily-only");
+  const [mode, setMode] = useState("all-hosts");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [loaded, setLoaded] = useState(false);
@@ -52,7 +54,7 @@ export default function AntigravityHostCard() {
       .then((r) => r.json())
       .then((s) => {
         if (!cancelled) {
-          setMode(s?.antigravityHostMode || "daily-only");
+          setMode(s?.antigravityHostMode || "all-hosts");
           setLoaded(true);
         }
       })
@@ -92,8 +94,8 @@ export default function AntigravityHostCard() {
             Host mana yang dicoba, berurut. Berlaku pada request berikutnya — tanpa restart.
           </p>
         </div>
-        <Badge variant={mode === "daily-only" ? "success" : "warning"}>
-          {mode === "daily-only" ? "Aman" : "Sandbox aktif"}
+        <Badge variant={mode === "daily-only" ? "success" : "info"}>
+          {active.urls.length} host
         </Badge>
       </div>
 

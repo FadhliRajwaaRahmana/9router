@@ -68,11 +68,11 @@ describe("Antigravity — rotasi host saat kapasitas habis", () => {
       expect(hostsTried[1]).toMatch(/sandbox/);
       expect(res?.response?.status).toBe(200);
     } finally {
-      setAntigravityHostMode("daily-only");
+      setAntigravityHostMode("all-hosts");
     }
   }, 30000);
 
-  it("mode default: 503 pada daily-only TIDAK memutar host (tidak ada tujuan)", async () => {
+  it("mode daily-only eksplisit: 503 TIDAK memutar host (tidak ada tujuan)", async () => {
     const { AntigravityExecutor } = await import("../../open-sse/executors/antigravity.js");
     const { setAntigravityHostMode } = await import("../../open-sse/providers/shared.js");
     setAntigravityHostMode("daily-only");
@@ -109,7 +109,7 @@ describe("Antigravity — rotasi host saat kapasitas habis", () => {
       const ex = new AntigravityExecutor();
       expect(ex.shouldRetry(429, 0)).toBe(true);
     } finally {
-      setAntigravityHostMode("daily-only");
+      setAntigravityHostMode("all-hosts");
     }
   });
 });

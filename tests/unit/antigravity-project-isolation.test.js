@@ -150,7 +150,7 @@ describe("Antigravity entitlement 403 — retry harus ke host lain, bukan akun l
       expect(next).toBe(urls[2]);      // host KETIGA, bukan host pertama
       expect(next).not.toBe(urls[0]);
     } finally {
-      setAntigravityHostMode("daily-only");
+      setAntigravityHostMode("all-hosts");
     }
   });
 
@@ -163,16 +163,34 @@ describe("Antigravity entitlement 403 — retry harus ke host lain, bukan akun l
       const fullUrl = ex.buildUrl(MODEL, true, urls.length - 1, { projectId: "p" });
       expect(ex.getHostForEntitlementRetry(fullUrl)).toBeNull();
     } finally {
-      setAntigravityHostMode("daily-only");
+      setAntigravityHostMode("all-hosts");
     }
   });
 
-  it("default daily-only: hanya satu host, tidak ada rotasi", () => {
+  it("default all-hosts: daily DULU, lalu sandbox sebagai cadangan", () => {
+    // Diukur 2026-09-20: gemini-3.8-flash hanya 2/8 sukses di daily sementara
+    // kedua sandbox 8/8. Default tanpa cadangan akan menggagalkan enam dari
+    // delapan akun pada model yang sebenarnya tersedia.
     const ex = new AntigravityExecutor();
-    expect(ex.getBaseUrls().length).toBe(1);
-    expect(ex.getBaseUrls()[0]).toContain("daily-cloudcode-pa.googleapis.com");
-    // Tidak ada tujuan rotasi di host terakhir (dan satu-satunya).
-    expect(ex.getHostForEntitlementRetry(ex.getBaseUrls()[0])).toBeNull();
+    const urls = ex.getBaseUrls();
+    expect(urls.length).toBe(3);
+    // daily WAJIB pertama — sandbox hanya dicoba setelah daily menolak.
+    expect(urls[0]).toBe("https://daily-cloudcode-pa.googleapis.com");
+    expect(urls[1]).toContain("sandbox");
+    expect(urls[2]).toContain("sandbox");
+  });
+
+  it("mode daily-only: satu host, tidak ada rotasi sama sekali", async () => {
+    const { setAntigravityHostMode } = await import("../../open-sse/providers/shared.js");
+    setAntigravityHostMode("daily-only");
+    try {
+      const ex = new AntigravityExecutor();
+      expect(ex.getBaseUrls().length).toBe(1);
+      expect(ex.getBaseUrls()[0]).toContain("daily-cloudcode-pa.googleapis.com");
+      expect(ex.getHostForEntitlementRetry(ex.getBaseUrls()[0])).toBeNull();
+    } finally {
+      setAntigravityHostMode("all-hosts");
+    }
   });
 
   it("host tak dikenal jatuh ke host pertama, bukan crash", () => {
