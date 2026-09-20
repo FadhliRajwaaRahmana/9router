@@ -3,7 +3,7 @@ import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/con
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
-import { getAntigravityQuotaCache } from "./antigravityQuota.js";
+import { getAntigravityQuotaCache, isAntigravityPoolBlocked } from "./antigravityQuota.js";
 import * as log from "../utils/logger.js";
 
 // Mutex to prevent race conditions during account selection
@@ -105,6 +105,23 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Antigravity quota cache is lazy: only populated after that account returns 409/429.
     const isAntigravity = providerId === "antigravity";
     const antigravityQuotaCache = isAntigravity && model ? getAntigravityQuotaCache() : null;
+
+    // Antigravity: 429 yang melanda BANYAK akun berbeda pada model yang sama
+    // adalah kondisi upstream, bukan akun. Tanpa ini router mencoba akun satu
+    // per satu sampai habis (terukur: puluhan akun terbakar dalam ~2 menit
+    // untuk satu model). Pool-block membuat permintaan gagal cepat dengan
+    // retryAfter, bukan membakar sisa pool.
+    if (isAntigravity && model && isAntigravityPoolBlocked(model)) {
+      const until = Date.now() + 30_000;
+      log.warn("AG_QUOTA", `${providerId} | POOL_BLOCKED ${model} — tolak cepat, jangan bakar akun`);
+      return {
+        allRateLimited: true,
+        retryAfter: new Date(until).toISOString(),
+        retryAfterHuman: formatRetryAfter(new Date(until).toISOString()),
+        lastError: `Model ${model} sedang diblokir sementara (429 melanda banyak akun)`,
+        lastErrorCode: 429,
+      };
+    }
 
     // Filter out model-locked, excluded, and Antigravity quota-exhausted connections.
     const availableConnections = connections.filter(c => {
