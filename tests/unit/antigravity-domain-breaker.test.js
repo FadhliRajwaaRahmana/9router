@@ -39,8 +39,13 @@ vi.mock("@/lib/localDb", () => ({
   getSettings: async () => ({}),
 }));
 
-const { maybeBreakAntigravityDomain, verifyAccountsAlive, _resetBreakerForTest } =
-  await import("../../src/sse/services/antigravityDomainBreaker.js");
+const {
+  maybeBreakAntigravityDomain,
+  verifyAccountsAlive,
+  isAntigravityEntitlementError,
+  isPermanentAntigravityAuthFailure,
+  _resetBreakerForTest,
+} = await import("../../src/sse/services/antigravityDomainBreaker.js");
 
 /**
  * Bentuk kondisi nyata: batch mati sudah ter-disable lebih dulu (itulah yang
@@ -208,5 +213,126 @@ describe("maybeBreakAntigravityDomain — regresi batch sehat", () => {
       "hww1@lain.com", "gemini", { refreshFn: fakeRefresh }
     );
     expect(verdict.broken).toBe(false);
+  });
+});
+
+/**
+ * Regresi 2026-09-20: burst 403 SUBSCRIPTION_REQUIRED (#3501) di Antigravity.
+ *
+ * Kejadian nyata: beberapa akun sehat kena 403 "You do not have a valid license
+ * of this product" beruntun. Google mengirim reason SUBSCRIPTION_REQUIRED di
+ * bawah status PERMISSION_DENIED — enum yang SAMA dengan akun yang benar-benar
+ * dihapus. Karena itu breaker tidak bisa membedakannya, dan berpotensi
+ * mem-bulk-disable seluruh domain.
+ *
+ * Ketiga bug ini diperbaiki; test di bawah mengunci masing-masing.
+ */
+describe("entitlement 403 (#3501) TIDAK dianggap kematian akun", () => {
+  const BODY_3501 = JSON.stringify({
+    error: {
+      code: 403,
+      message: "You do not have a valid license of this product. Please contact your administrator to request a license. (#3501)",
+      status: "PERMISSION_DENIED",
+      details: [
+        { "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "SUBSCRIPTION_REQUIRED", domain: "cloudaicompanion.googleapis.com" },
+        { "@type": "type.googleapis.com/google.rpc.Help", links: [{ description: "Learn more", url: "https://cloud.google.com/gemini/docs/codeassist/request-license" }] },
+      ],
+    },
+  });
+
+  it("mengenali body #3501 sebagai entitlement error", () => {
+    expect(isAntigravityEntitlementError(403, BODY_3501)).toBe(true);
+    expect(isAntigravityEntitlementError(403, "SUBSCRIPTION_REQUIRED")).toBe(true);
+    expect(isAntigravityEntitlementError(403, "You do not have a valid license of this product")).toBe(true);
+    // Bukan entitlement
+    expect(isAntigravityEntitlementError(403, "Account has been deleted")).toBe(false);
+    expect(isAntigravityEntitlementError(429, BODY_3501)).toBe(false);
+  });
+
+  it("TIDAK mengklasifikasikan #3501 sebagai permanent auth failure", () => {
+    // Inti regresi: dulu /PERMISSION_DENIED/i membuat ini true -> bulk-disable.
+    expect(isPermanentAntigravityAuthFailure(403, BODY_3501)).toBe(false);
+  });
+
+  it("tetap mendeteksi kematian akun yang sebenarnya", () => {
+    expect(isPermanentAntigravityAuthFailure(401, "whatever")).toBe(true);
+    expect(isPermanentAntigravityAuthFailure(403, '{"error":{"message":"Account has been deleted"}}')).toBe(true);
+    expect(isPermanentAntigravityAuthFailure(400, "invalid_grant")).toBe(true);
+    expect(isPermanentAntigravityAuthFailure(403, "unauthorized_client")).toBe(true);
+  });
+
+  it("tidak lagi cocok pada pola terlalu luas (Bad Request / 401 / unauthorized)", () => {
+    // Dulu ini semua true -> akun sehat ikut mati.
+    expect(isPermanentAntigravityAuthFailure(400, "Bad Request: malformed body")).toBe(false);
+    expect(isPermanentAntigravityAuthFailure(403, '{"requestId":"req_401_abc"}')).toBe(false);
+    expect(isPermanentAntigravityAuthFailure(403, "unauthorized")).toBe(false);
+  });
+});
+
+describe("verifyAccountsAlive — kegagalan refresh transien bukan kematian", () => {
+  it("mengembalikan error non-definitif = tidak dihakimi (bukan mati)", async () => {
+    // refreshGoogleToken RETURN {error}, tidak throw. Dulu !accessToken => mati.
+    const transient = () => Promise.resolve({ error: "server_error", message: "500 Internal" });
+    const v = await verifyAccountsAlive(
+      [{ id: "a1", email: "a@x.com", refreshToken: "rt-a1" }],
+      transient
+    );
+    expect(v.has("a1")).toBe(false);   // absent = tetap aktif
+  });
+
+  it("mengembalikan invalid_grant = mati (definitif)", async () => {
+    const dead = () => Promise.resolve({ error: "invalid_grant", message: "Account has been deleted" });
+    const v = await verifyAccountsAlive(
+      [{ id: "d1", email: "d@x.com", refreshToken: "rt-d1" }],
+      dead
+    );
+    expect(v.get("d1")).toBe(true);
+  });
+
+  it("mengembalikan accessToken = hidup (terbukti)", async () => {
+    const alive = () => Promise.resolve({ accessToken: "ya29.x", expiresIn: 3600 });
+    const v = await verifyAccountsAlive(
+      [{ id: "l1", email: "l@x.com", refreshToken: "rt-l1" }],
+      alive
+    );
+    expect(v.get("l1")).toBe(false);
+  });
+
+  it("return null (5xx/network) = tidak dihakimi", async () => {
+    const nulled = () => Promise.resolve(null);
+    const v = await verifyAccountsAlive(
+      [{ id: "n1", email: "n@x.com", refreshToken: "rt-n1" }],
+      nulled
+    );
+    expect(v.has("n1")).toBe(false);
+  });
+});
+
+describe("ambang breaker memakai ukuran DOMAIN, bukan sisa aktif", () => {
+  beforeEach(() => _resetBreakerForTest());
+
+  it("domain yang hampir terkuras tidak terpicu oleh satu 403", async () => {
+    // 59 dari 61 sudah nonaktif, 2 aktif. Dulu: total=2 <3 -> threshold=1 ->
+    // satu 403 memicu sweep. Sekarang: domainSize=61 -> threshold=19, dan
+    // minDead=5 -> tidak terpicu.
+    store.connections = [];
+    for (let i = 1; i <= 59; i++) {
+      store.connections.push({
+        id: `dead${i}`, provider: "antigravity", email: `dead${i}@ratchet.com`,
+        isActive: false, data: { refreshToken: `rt-dead${i}` },
+      });
+    }
+    for (let i = 1; i <= 2; i++) {
+      store.connections.push({
+        id: `live${i}`, provider: "antigravity", email: `live${i}@ratchet.com`,
+        isActive: true, data: { refreshToken: `rt-live${i}` },
+      });
+    }
+    const verdict = await maybeBreakAntigravityDomain(
+      "live1@ratchet.com", "antigravity", { refreshFn: () => Promise.resolve({ accessToken: "ya29.ok" }) }
+    );
+    expect(verdict.broken).toBe(false);
+    const aktif = store.connections.filter((c) => c.isActive !== false);
+    expect(aktif.length).toBe(2);
   });
 });

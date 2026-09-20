@@ -57,15 +57,41 @@ function extractDomain(email) {
 // not a transient quota (429) or bad request body.
 const PERMANENT_AUTH_PATTERNS = [
   /invalid_grant/i,
-  /PERMISSION_DENIED/i,
-  /UNAUTHENTICATED/i,
   /account.*(?:deleted|disabled|not found|suspended|does not exist)/i,
   /user.*(?:deleted|disabled|not found|suspended)/i,
-  /Bad Request/i,
   /NO_CREDENTIALS/i,
-  /401/i,
-  /unauthorized/i,
+  /unauthorized_client/i,
 ];
+
+/**
+ * Entitlement/licensing refusals — the account exists and its token is valid,
+ * but Google declines to serve it right now.
+ *
+ * These MUST be checked BEFORE PERMANENT_AUTH_PATTERNS, because Google carries
+ * `reason: "SUBSCRIPTION_REQUIRED"` under `status: "PERMISSION_DENIED"` — the
+ * exact same enum a genuinely deleted account returns. Matching on
+ * PERMISSION_DENIED therefore cannot tell "this account is gone" from "this
+ * account is not entitled for this request", and treating the latter as death
+ * bulk-disables healthy accounts.
+ *
+ * Observed live 2026-09-20: a burst of 403 #3501 responses across several
+ * healthy accounts on one domain. Every account verified alive afterwards
+ * (token refresh returned 200 on all of them), so none of them were dead.
+ */
+const ENTITLEMENT_PATTERNS = [
+  /SUBSCRIPTION_REQUIRED/i,
+  /valid license of this product/i,
+  /#\s*3501\b/,
+  /request-license/i,
+  /cloudaicompanion\.googleapis\.com/i,
+];
+
+export function isAntigravityEntitlementError(status, errorText) {
+  if (status !== 403) return false;
+  const text = String(errorText || "");
+  if (!text) return false;
+  return ENTITLEMENT_PATTERNS.some((re) => re.test(text));
+}
 
 export function isPermanentAntigravityAuthFailure(status, errorText) {
   if (status !== 400 && status !== 401 && status !== 403) return false;
@@ -73,6 +99,10 @@ export function isPermanentAntigravityAuthFailure(status, errorText) {
   if (status === 401) return true;
   const text = String(errorText || "");
   if (!text) return status === 401;
+  // Entitlement refusal is NOT account death — the token is fine, Google just
+  // will not serve this request. Excluding it here is what keeps a burst of
+  // #3501 from sweeping a whole domain of live accounts.
+  if (isAntigravityEntitlementError(status, text)) return false;
   return PERMANENT_AUTH_PATTERNS.some((re) => re.test(text));
 }
 
@@ -118,11 +148,25 @@ export async function verifyAccountsAlive(accounts, refreshFn = null) {
           doRefresh({ refreshToken: acct.refreshToken, email: acct.email }),
           new Promise((_, rej) => setTimeout(() => rej(new Error("verify timeout")), VERIFY_TIMEOUT_MS)),
         ]);
-        // A returned access_token proves the account is alive.
-        out.set(acct.id, !refreshed?.accessToken);
+        // Three-way classification. `refreshGoogleToken` RETURNS a failure
+        // object ({error:"invalid_grant"}) rather than throwing, so an
+        // `!refreshed?.accessToken` test scored EVERY failure — including a
+        // transient network error — as death. That fed healthy accounts into
+        // the bulk-disable path, which is the exact bug this function exists
+        // to prevent. Only a proven death may be marked dead.
+        if (refreshed?.accessToken) {
+          out.set(acct.id, false);                        // proven alive
+        } else if (refreshed?.error) {
+          const msg = String(refreshed.message || refreshed.error);
+          if (/invalid_grant|deleted|disabled|suspended|not found|unauthorized_client/i.test(msg)) {
+            out.set(acct.id, true);                       // proven dead
+          }
+          // Any other returned error (rate limit, 5xx, quota) stays unjudged.
+        }
+        // No token and no error (null) -> unjudged.
       } catch (e) {
-        // Definitive rejections only. Anything else (timeout, network, 5xx)
-        // stays unjudged so the caller keeps the account.
+        // Thrown errors only. Definitive rejections count; anything else
+        // (timeout, network) stays unjudged so the caller keeps the account.
         const msg = String(e?.message || e || "");
         if (/invalid_grant|account.*(?:deleted|disabled|suspended|not found)|unauthorized_client/i.test(msg)) {
           out.set(acct.id, true);
@@ -186,14 +230,29 @@ export async function maybeBreakAntigravityDomain(email, provider, opts = {}) {
   const alreadyDisabled = allWithInactive.length - total;
   const deadCount = alreadyDisabled + 1; // +1 for the just-failed account (not yet written as disabled in this call)
 
-  // Adaptive threshold — dynamic per domain size
+  // Adaptive threshold — keyed off the DOMAIN SIZE, not the remaining active
+  // count. Sizing it off `total` (active) made the threshold collapse toward 1
+  // as a domain drained: with 59 of 61 already disabled, total=2 < 3 gave
+  // threshold=1, so a single 403 fired the breaker. That is a ratchet — the
+  // more accounts a domain loses, the easier the next one triggers a sweep of
+  // whatever is left.
+  const domainSize = allWithInactive.length;
   let threshold;
-  if (total < 3) threshold = 1;
-  else if (total <= 15) threshold = 2;
-  else threshold = Math.max(2, Math.ceil(allWithInactive.length * 0.3));
+  if (domainSize < 3) threshold = 1;
+  else if (domainSize <= 15) threshold = 2;
+  else threshold = Math.max(2, Math.ceil(domainSize * 0.3));
+
+  // A nearly-drained domain must not trigger on a single fresh failure. Require
+  // a minimum absolute number of dead accounts whenever the domain is big
+  // enough to have one — this is what stops the ratchet from re-firing.
+  const MIN_DEAD_FOR_LARGE_DOMAIN = 5;
+  const minDead = domainSize > 15 ? MIN_DEAD_FOR_LARGE_DOMAIN : 1;
+  if (deadCount < minDead) {
+    return { broken: false, domain, disabledCount: 0 };
+  }
 
   // Alternative ratio trigger for large domains (e.g. 40 accounts, 12 already dead = 30%)
-  const ratioTriggered = allWithInactive.length >= 6 && deadCount / allWithInactive.length >= 0.35;
+  const ratioTriggered = domainSize >= 6 && deadCount / domainSize >= 0.35;
 
   const shouldBreak = deadCount >= threshold || ratioTriggered;
   if (!shouldBreak) {

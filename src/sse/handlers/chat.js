@@ -8,6 +8,7 @@ import {
   isValidApiKey,
 } from "../services/auth.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
+import { isAntigravityEntitlementError } from "../services/antigravityDomainBreaker.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
@@ -320,8 +321,22 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       if (quotaResetMs) resetsAtMs = quotaResetMs;
     }
 
+    // Antigravity entitlement 403 (#3501 SUBSCRIPTION_REQUIRED): the account is
+    // alive and its token is valid, but Cloud Code declines to serve it. This is
+    // NOT account death — treating it as such locked a healthy account for 120s
+    // and walked the remaining 60 accounts at ~8-9s each, every one of them
+    // hitting the same refusal.
+    //
+    // It must not reach the domain breaker either: the 403 body carries
+    // status PERMISSION_DENIED, the same enum a genuinely deleted account
+    // returns, so the breaker would count it as permanent death and could
+    // bulk-disable the whole domain.
+    const entitlement403 = provider === "antigravity"
+      && result.status === HTTP_STATUS.FORBIDDEN
+      && isAntigravityEntitlementError(result.status, result.error);
+
     // Antigravity permanent domain failure (401/403 deleted account by admin):
-    if (provider === "antigravity" && result.status >= 400 && result.status <= 403) {
+    if (provider === "antigravity" && !entitlement403 && result.status >= 400 && result.status <= 403) {
       try {
         const { isPermanentAntigravityAuthFailure, maybeBreakAntigravityDomain } = await import("../services/antigravityDomainBreaker.js");
         if (isPermanentAntigravityAuthFailure(result.status, result.error)) {
@@ -334,6 +349,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       } catch {
         // never break the fallback hot path for a breaker error
       }
+    }
+
+    // Fail fast on the entitlement refusal: no lock, no account walk. Every
+    // account shares the same host chain, so retrying the remaining 60 costs
+    // minutes and cannot succeed. Surface a retryable 503 instead — the client
+    // can retry later, when Google's gate may have lifted.
+    if (entitlement403) {
+      log.warn("FALLBACK", `⛔ ${credentials.connectionName} ${provider}/${model} not entitled (403 #3501) — account NOT locked, no account walk`);
+      return errorResponse(
+        HTTP_STATUS.SERVICE_UNAVAILABLE,
+        `[${provider}/${model}] model unavailable — Cloud Code entitlement refusal (403 #3501). `
+        + `The account is healthy; this is an upstream gate, not an auth failure. Retry later.`
+      );
     }
 
     // Exhausted Antigravity model is blocked only in RAM cache until upstream resetAt.
