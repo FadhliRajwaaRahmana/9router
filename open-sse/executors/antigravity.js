@@ -711,6 +711,19 @@ export class AntigravityExecutor extends BaseExecutor {
     if (!retryMs) retryMs = this.parseRetryFromErrorMessage(errorMessage);
     if (retryMs) return retryMs <= MAX_RETRY_AFTER_MS ? retryMs : false;
 
+    // 429 TANPA info delay → JANGAN retry in-place; biarkan rotasi host/akun.
+    //
+    // Terukur 2026-09-20 pada payload besar (image + 123 tool, ~7 detik per
+    // percobaan): 429 generik `"Resource has been exhausted (e.g. check
+    // quota)."` — TANPA error.details[] — membuat computeRetryDelay jatuh ke
+    // backoff buta. Dengan attempts:2 di tiga host itu menjadi 9 percobaan
+    // = 48-64 detik sebelum menyerah, padahal sebelumnya ~12 detik.
+    //
+    // Prinsipnya: retry in-place hanya bila upstream menyebut KAPAN harus
+    // retry (RetryInfo.retryDelay / quotaResetDelay / Retry-After). Tanpa itu,
+    // menunggu 2s+4s di host yang sama hanya menunda rotasi yang lebih murah.
+    if (response.status === HTTP_STATUS.RATE_LIMITED) return false;
+
     if (!this.isTransientAntigravityError(response.status, errorMessage)) return false;
 
     const cap = response.status === HTTP_STATUS.RATE_LIMITED

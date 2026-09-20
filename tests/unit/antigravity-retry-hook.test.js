@@ -29,9 +29,16 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
     expect(await ag.computeRetryDelay(r, 1)).toBe(3000);
   });
 
-  it("exponential backoff for 429 when no retry info", async () => {
-    expect(await ag.computeRetryDelay(res(429), 1)).toBe(Math.min(1000 * 2 ** 1, MAX));
-    expect(await ag.computeRetryDelay(res(429), 3)).toBe(Math.min(1000 * 2 ** 3, MAX));
+  it("429 tanpa info retry → veto, bukan backoff buta", async () => {
+    // Perilaku LAMA: 429 tanpa info → backoff eksponensial 2s/4s.
+    // Itu diubah 2026-09-20 karena biayanya terukur: dengan attempts:2 di tiga
+    // host, payload besar (image + 123 tool, ~7s per percobaan) menghabiskan
+    // 48-64 detik sebelum menyerah, naik dari ~12 detik.
+    //
+    // 429 kini di-retry in-place HANYA bila upstream menyebut kapan pulih
+    // (Retry-After / RetryInfo.retryDelay / quotaResetDelay).
+    expect(await ag.computeRetryDelay(res(429), 1)).toBe(false);
+    expect(await ag.computeRetryDelay(res(429), 3)).toBe(false);
   });
 
   it("membaca pesan burst asli 'Resets in 0s.' (regresi 2026-09-20)", async () => {
@@ -199,6 +206,41 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
     // Kuota mingguan habis → jangan retry in-place berulang kali.
     const r = res(429, {}, { error: { message: "You have exhausted your capacity. Resets in 149h50m20s." } });
     expect(await ag.computeRetryDelay(r, 1)).toBe(false);
+  });
+
+  it("429 TANPA info delay → veto (jangan retry in-place)", async () => {
+    // Regresi 2026-09-20: attempts:2 + 429 generik tanpa details[] membuat
+    // 9 percobaan lintas 3 host = 48-64 detik pada payload besar (image +
+    // 123 tool, ~7s per percobaan), naik dari ~12 detik.
+    //
+    // Prinsip: retry in-place HANYA bila upstream menyebut kapan harus retry.
+    const generic = res(429, {}, {
+      error: {
+        code: 429,
+        message: "Resource has been exhausted (e.g. check quota).",
+        status: "RESOURCE_EXHAUSTED",
+      },
+    });
+    expect(await ag.computeRetryDelay(generic, 1)).toBe(false);
+    expect(await ag.computeRetryDelay(generic, 2)).toBe(false);
+
+    // 429 tanpa body sama sekali juga veto.
+    expect(await ag.computeRetryDelay(res(429), 1)).toBe(false);
+  });
+
+  it("429 DENGAN RetryInfo tetap di-retry (bukan veto)", async () => {
+    // Kebalikannya harus tetap jalan: burst 429 yang menyebut kapan pulih.
+    const burst = res(429, {}, {
+      error: {
+        code: 429,
+        message: "You have exhausted your capacity on this model. Resets in 0s.",
+        status: "RESOURCE_EXHAUSTED",
+        details: [
+          { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "0.162322081s" },
+        ],
+      },
+    });
+    expect(await ag.computeRetryDelay(burst, 1)).toBe(163);
   });
 
   it("buildHeaders matches official IDE stream headers", () => {
