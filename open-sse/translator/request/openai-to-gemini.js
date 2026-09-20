@@ -18,6 +18,7 @@ import {
 } from "../formats/gemini.js";
 import { deriveSessionId, toNumericSessionId } from "../../utils/sessionManager.js";
 import { ROLE, GEMINI_ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../schema/index.js";
+import { parseDataUri } from "../concerns/image.js";
 
 // Sanitize function names for Gemini API.
 // Gemini requires: starts with [a-zA-Z_], followed by [a-zA-Z0-9_.:\-], max 64 chars.
@@ -180,20 +181,44 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
               }
 
               let resp = toolResponses[fid];
-              let parsedResp = tryParseJSON(resp);
-              if (parsedResp === null) {
-                parsedResp = { result: resp };
-              } else if (typeof parsedResp !== "object") {
-                parsedResp = { result: parsedResp };
+              // Array berisi image (dari claude-to-openai) harus dipecah:
+              // teks → response.result, image → functionResponse.parts sebagai
+              // inlineData. Gemini menolak base64 yang di-stringify ke result.
+              let parsedResp;
+              const imageParts = [];
+              if (Array.isArray(resp)) {
+                const textBits = [];
+                for (const item of resp) {
+                  if (item?.type === OPENAI_BLOCK.IMAGE_URL && item.image_url?.url) {
+                    const parsed = parseDataUri(item.image_url.url);
+                    if (parsed) {
+                      imageParts.push({
+                        inlineData: { mimeType: parsed.mimeType, data: parsed.base64 }
+                      });
+                    }
+                  } else if (item?.type === OPENAI_BLOCK.TEXT) {
+                    textBits.push(item.text);
+                  }
+                }
+                parsedResp = tryParseJSON(textBits.join("\n"));
+                if (parsedResp === null) parsedResp = { result: textBits.join("\n") };
+                else if (typeof parsedResp !== "object") parsedResp = { result: parsedResp };
+              } else {
+                parsedResp = tryParseJSON(resp);
+                if (parsedResp === null) {
+                  parsedResp = { result: resp };
+                } else if (typeof parsedResp !== "object") {
+                  parsedResp = { result: parsedResp };
+                }
               }
 
-              toolParts.push({
-                functionResponse: {
-                  id: fid,
-                  name: sanitizeGeminiFunctionName(name),
-                  response: { result: parsedResp }
-                }
-              });
+              const fnResponse = {
+                id: fid,
+                name: sanitizeGeminiFunctionName(name),
+                response: { result: parsedResp }
+              };
+              if (imageParts.length > 0) fnResponse.parts = imageParts;
+              toolParts.push({ functionResponse: fnResponse });
             }
             if (toolParts.length > 0) {
               result.contents.push({ role: GEMINI_ROLE.USER, parts: toolParts });

@@ -201,14 +201,28 @@ function convertClaudeMessage(msg) {
           if (typeof block.content === "string") {
             resultContent = block.content;
           } else if (Array.isArray(block.content)) {
-            resultContent = block.content
-              .filter(c => c.type === CLAUDE_BLOCK.TEXT)
-              .map(c => c.text)
-              .join("\n") || JSON.stringify(block.content);
+            // Pertahankan image sebagai blok terstruktur, JANGAN di-stringify.
+            //
+            // Sebelumnya hanya blok TEXT yang diambil dan sisanya jatuh ke
+            // JSON.stringify — image di dalam tool_result berubah menjadi teks
+            // `[{"type":"image",...}]` yang tidak bisa dilihat model, sekaligus
+            // membengkakkan token. Downstream (openai-to-gemini) sekarang
+            // memisahkan teks dan image dari array ini.
+            const kept = block.content.filter(
+              c => c.type === CLAUDE_BLOCK.TEXT || c.type === CLAUDE_BLOCK.IMAGE
+            );
+            if (kept.length > 0) {
+              // Teks saja → string (bentuk OpenAI lama, tidak mengubah
+              // perilaku untuk kasus yang sudah bekerja).
+              const hasImage = kept.some(c => c.type === CLAUDE_BLOCK.IMAGE);
+              resultContent = hasImage ? kept : kept.map(c => c.text).join("\n");
+            } else {
+              resultContent = JSON.stringify(block.content);
+            }
           } else if (block.content) {
             resultContent = JSON.stringify(block.content);
           }
-          
+
           toolResults.push({
             role: ROLE.TOOL,
             tool_call_id: block.tool_use_id,

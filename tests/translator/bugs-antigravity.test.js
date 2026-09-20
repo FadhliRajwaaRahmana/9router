@@ -138,14 +138,13 @@ describe("Antigravity executor", () => {
   });
 });
 
-describe("Claude → Antigravity image preservation (direct route)", () => {
+describe("Claude → Antigravity image preservation (pivot claude→openai→antigravity)", () => {
   const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
   const AG = (model, body) =>
     translateRequest(FORMATS.CLAUDE, FORMATS.ANTIGRAVITY, model, body, true, { accessToken: "t", email: "x@y.z" }, "antigravity");
 
-  // claude-to-antigravity.js — pasted image in a user message was dropped by
-  // wrapInCloudCodeEnvelopeForClaude (no CLAUDE_BLOCK.IMAGE branch). Now it must
-  // survive as inlineData with the camelCase mimeType field.
+  // Dulu image di pesan user dibuang oleh pivot (envelope Claude tidak punya
+  // cabang IMAGE). Sekarang harus selamat sebagai inlineData.
   it("Claude-backed model keeps image in user message as inlineData", () => {
     const out = AG("claude-opus-4-6", {
       model: "claude-opus-4-6",
@@ -160,12 +159,14 @@ describe("Claude → Antigravity image preservation (direct route)", () => {
     const parts = out.request.contents[0].parts;
     const inline = parts.find((p) => p.inlineData);
     expect(inline, "image dropped for Claude model").toBeTruthy();
+    // Satu bentuk saja: mimeType, konsisten dengan convertOpenAIContentToParts.
+    // Google menerima mime_type maupun mimeType (terukur 2026-09-20), jadi yang
+    // penting adalah TIDAK ada dua bentuk berbeda dalam satu codebase.
     expect(inline.inlineData.mimeType).toBe("image/png");
     expect(inline.inlineData.data).toBe(PNG);
   });
 
-  // gemini.js convertOpenAIContentToParts produced mime_type (snake_case) while
-  // the rest of the codebase (and Antigravity) reads mimeType. Normalized here.
+  // Bentuk mime tunggal (camelCase), konsisten di seluruh pivot.
   it("Gemini-backed model keeps image with camelCase mimeType", () => {
     const out = AG("gemini-3.6-flash-high", {
       model: "gemini-3.6-flash-high",
@@ -183,9 +184,9 @@ describe("Claude → Antigravity image preservation (direct route)", () => {
     expect(JSON.stringify(out)).not.toContain("mime_type");
   });
 
-  // claude-to-antigravity.js — image inside tool_result used to be stringified
-  // into response.result (claude-to-openai). Now it must land in
-  // functionResponse.parts[].inlineData, text stays in response.result.
+  // Image di dalam tool_result dulu di-stringify jadi teks JSON oleh
+  // claude-to-openai. Sekarang harus mendarat di functionResponse.parts
+  // sebagai inlineData, teks tetap di response.result.
   it("image inside tool_result lands in functionResponse.parts as inlineData", () => {
     const out = AG("claude-opus-4-6", {
       model: "claude-opus-4-6",
