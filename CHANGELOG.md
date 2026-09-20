@@ -1,3 +1,55 @@
+# v0.5.95 (2026-09-20) — 9router-imagefix
+
+## Fixes
+- **Antigravity: 403 SUBSCRIPTION_REQUIRED (#3501) — akar masalah ditemukan
+  dan diperbaiki.** Akun sehat di-lock 120s lalu seluruh pool di-walk satu per
+  satu, semuanya gagal dengan "You do not have a valid license of this product".
+
+  Penyebabnya: Google **menggerbangi host sandbox pada kepemilikan project**.
+  Request yang membawa project bukan milik akun tersebut ditolak 403 #3501.
+  Diukur langsung (2026-09-20):
+
+  | host | project milik akun | project asing |
+  |---|---|---|
+  | `daily` | 200 | 200 |
+  | `autopush` sandbox | 200 | **403 #3501** |
+  | `staging` sandbox | 200 | **403 #3501** |
+
+  Project asing itu berasal dari dua bug:
+  1. `AntigravityExecutor` adalah singleton dan menyimpan project pertama yang
+     dilihat ke `this.projectId`, lalu memakainya untuk **semua akun berikutnya**.
+  2. `generateProjectId()` **mengarang** project acak (`bright-wave-ngqrb`) saat
+     kredensial tidak punya project. Project karangan tidak sah untuk akun mana
+     pun — diukur: project acak dan string kosong sama-sama 403 di sandbox.
+
+  Karena `daily` dicoba lebih dulu dan berotasi saat kapasitas habis, project
+  asing baru muncul setelah rotasi ke sandbox — itulah sebabnya gejalanya
+  tampak seperti masalah host atau akun.
+
+  Perbaikan: project kini di-resolve per-request dari kredensial akun yang
+  sedang dilayani; project karangan dihapus dari ketiga jalur (executor + dua
+  wrapper translator); `chat.js` mengulang resolve sekali lalu menolak dispatch
+  dengan pesan jelas bila tetap gagal, alih-alih mengirim request tanpa
+  identitas yang pasti ditolak.
+
+- **Antigravity: 403 entitlement tidak lagi mematikan akun sehat.** Sebelumnya
+  403 lisensi cocok dengan pola `/PERMISSION_DENIED/i` sehingga dihitung sebagai
+  "akun mati" dan dialirkan ke domain breaker — berpotensi mem-bulk-disable
+  seluruh domain (61 akun). Pola entitlement kini diperiksa lebih dulu dan
+  mengembalikan `false`. Tiga pola terlalu luas juga dihapus: `/Bad Request/i`,
+  `/401/i` (cocok dengan angka apa pun di body), dan `/unauthorized/i`
+  dipersempit ke `/unauthorized_client/i`.
+
+- **`verifyAccountsAlive` tidak lagi menilai kegagalan refresh sebagai kematian.**
+  `refreshGoogleToken` mengembalikan `{error}` alih-alih melempar, sehingga
+  `!refreshed?.accessToken` bernilai true untuk SETIAP kegagalan — termasuk error
+  jaringan sesaat — dan akun sehat ditulis `isActive:false`. Klasifikasi kini tiga
+  arah: terbukti hidup / terbukti mati / tidak dihakimi.
+
+- **Ambang domain breaker memakai ukuran domain, bukan sisa aktif.** Dengan 59
+  dari 61 sudah nonaktif, `total=2 < 3` memberi threshold=1 sehingga satu 403
+  memicu sweep. Kini memakai ukuran domain + minimum absolut akun mati.
+
 # v0.5.94 (2026-09-19) — 9router-imagefix
 
 ## Fixes

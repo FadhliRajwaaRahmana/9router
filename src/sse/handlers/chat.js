@@ -254,12 +254,39 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
     // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
+    //
+    // A missing project is not cosmetic on Antigravity: Google gates the sandbox
+    // hosts on project ownership, and a request carrying no project (or a
+    // fabricated one) is refused with 403 SUBSCRIPTION_REQUIRED (#3501) — which
+    // used to lock the account and walk the whole pool. Since the executor no
+    // longer invents a project, resolve it here and retry the lookup once before
+    // giving up: a cold cache or a transient failure should not become a 403.
     if ((provider === "antigravity" || provider === "gemini-cli") && !refreshedCredentials.projectId) {
-      const pid = await getProjectIdForConnection(credentials.connectionId, refreshedCredentials.accessToken, provider);
+      let pid = null;
+      for (let attempt = 1; attempt <= 2 && !pid; attempt++) {
+        try {
+          pid = await getProjectIdForConnection(credentials.connectionId, refreshedCredentials.accessToken, provider);
+        } catch {
+          pid = null;
+        }
+        if (!pid && attempt === 1) {
+          log.warn("AUTH", `${provider} | projectId resolve failed, retrying once before dispatch`);
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      }
       if (pid) {
         refreshedCredentials.projectId = pid;
         // Persist to DB in background so subsequent requests have it immediately
         updateProviderCredentials(credentials.connectionId, { projectId: pid }).catch(() => { });
+      } else {
+        // No project after a retry: fail fast and visibly instead of dispatching
+        // a request that the sandbox hosts are guaranteed to refuse.
+        log.warn("AUTH", `${provider} | no projectId for ${credentials.connectionName} — refusing to dispatch a project-less request`);
+        return errorResponse(
+          HTTP_STATUS.BAD_GATEWAY,
+          `[${provider}] could not resolve a project for this account. `
+          + `Retry shortly; if it persists the account needs re-authentication.`
+        );
       }
     }
 

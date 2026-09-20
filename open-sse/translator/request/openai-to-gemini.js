@@ -14,7 +14,6 @@ import {
   tryParseJSON,
   generateRequestId,
   generateSessionId,
-  generateProjectId,
   cleanJSONSchemaForAntigravity
 } from "../formats/gemini.js";
 import { deriveSessionId, toNumericSessionId } from "../../utils/sessionManager.js";
@@ -272,7 +271,10 @@ export function openaiToGeminiCLIRequest(model, body, stream, credentials = null
 
 // Wrap Gemini CLI format in Cloud Code wrapper
 function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigravity = false) {
-  const projectId = credentials?.projectId || generateProjectId();
+  // A fabricated project is not valid for any account and earns 403 #3501 on
+  // the sandbox hosts (measured: generated id and empty string both 403, the
+  // account's real project 200). Never invent one — send what we actually have.
+  const projectId = credentials?.projectId || "";
 
   const envelope = {
     project: projectId,
@@ -307,7 +309,9 @@ function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigra
 
 // Wrap Claude format in Cloud Code envelope for Antigravity
 export function wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials = null, signature = DEFAULT_THINKING_AG_SIGNATURE) {
-  const projectId = credentials?.projectId || generateProjectId();
+  // See wrapInCloudCodeEnvelope: a fabricated project is a guaranteed 403 on
+  // the sandbox hosts, so never substitute one for a missing credential.
+  const projectId = credentials?.projectId || "";
 
   const envelope = {
     project: projectId,

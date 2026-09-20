@@ -126,8 +126,10 @@ export class AntigravityExecutor extends BaseExecutor {
     // upstreams consume the window. Override: ANTIGRAVITY_CONNECT_TIMEOUT_MS.
     const envTimeout = parseInt(process.env.ANTIGRAVITY_CONNECT_TIMEOUT_MS || "", 10);
     this.config.timeoutMs = Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : 120000;
-    // Optimization #1: Local projectId cache to avoid API call on every request
-    this.projectId = null;
+    // NOTE: there is deliberately NO `this.projectId` cache. This executor is a
+    // singleton shared by every account, so a cached project leaks across
+    // accounts and earns 403 #3501 on the sandbox hosts (see transformRequest).
+    // The project is resolved per request from credentials.projectId.
     // Optimization #5: Schema cache to avoid re-processing tools on every request
     this.schemaCache = new Map();
 
@@ -198,13 +200,39 @@ export class AntigravityExecutor extends BaseExecutor {
   }
 
   transformRequest(model, body, stream, credentials) {
-    // Optimization #1: Use cached projectId (no API call needed!)
-    const projectId = this.projectId || credentials?.projectId || this.generateProjectId();
-
-    if (!this.projectId) {
-      console.log("[Antigravity] Using projectId:", projectId);
-      this.projectId = projectId;
-    }
+    // The project MUST come from the account serving THIS request.
+    //
+    // This used to cache the first project it ever saw on `this.projectId` and
+    // reuse it forever. Because the executor is a module-level singleton
+    // (executors/index.js), that cache is shared by every account: once one
+    // account's project was stored, every later request sent THAT project, no
+    // matter which account it belonged to.
+    //
+    // That is fatal on the sandbox hosts. Google gates the sandbox on project
+    // ownership: a request whose `project` is not the one loadCodeAssist returns
+    // for that account is refused with 403 SUBSCRIPTION_REQUIRED (#3501, "You do
+    // not have a valid license of this product"). Measured live 2026-09-20 —
+    // own project 21/21 -> 200, foreign project 28/28 -> 403 on autopush and
+    // staging; daily accepts either. Since daily is tried first and rotates on
+    // capacity errors, the foreign project only surfaced after a rotation, which
+    // is why it looked like a host or account fault.
+    //
+    // Per-request resolution costs nothing: credentials.projectId is already
+    // resolved upstream (projectId.js caches it per connection).
+    //
+    // The random generateProjectId() fallback was itself a 403 source and is
+    // gone. Measured on autopush: a generated id ("bright-wave-ngqrb") and an
+    // empty string BOTH returned 403 #3501, while the account's real project
+    // returned 200. A fabricated project is not valid for ANY account, so
+    // sending one can only ever earn a refusal — it never turns a failing
+    // request into a working one. Omitting the field fails the same way but
+    // says so honestly instead of inventing an identity.
+    //
+    // A credential with no project is therefore a broken credential, not a
+    // request to patch up here. Callers resolve the project before dispatch
+    // (chat.js -> getProjectIdForConnection); when that fails the request is
+    // allowed to fail rather than sent under a fabricated identity.
+    const projectId = credentials?.projectId || "";
 
     // OpenAI clients may include stream_options even for non-streaming calls.
     // Google generateContent rejects that combination before processing the request.
@@ -450,11 +478,11 @@ export class AntigravityExecutor extends BaseExecutor {
     }
   }
 
-  generateProjectId() {
-    const adj = ["useful", "bright", "swift", "calm", "bold"][Math.floor(Math.random() * 5)];
-    const noun = ["fuze", "wave", "spark", "flow", "core"][Math.floor(Math.random() * 5)];
-    return `${adj}-${noun}-${crypto.randomUUID().slice(0, 5)}`;
-  }
+  // NOTE: generateProjectId() was removed on purpose. It fabricated ids like
+  // "bright-wave-ngqrb" which are not valid for any account and returned 403
+  // #3501 on the sandbox hosts — it could only ever turn a failing request into
+  // a differently-failing one. The project now comes from the credential, or
+  // the request is refused upstream with a clear error.
 
   generateSessionId() {
     return crypto.randomUUID() + Date.now().toString();
