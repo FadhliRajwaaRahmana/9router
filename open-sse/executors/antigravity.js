@@ -182,11 +182,37 @@ export class AntigravityExecutor extends BaseExecutor {
    * Baseline 429 tetap dipertahankan supaya perilaku lama tidak berubah.
    * Hanya status transien di ANTIGRAVITY_TRANSIENT_STATUSES (500/502/503/504)
    * yang ikut memicu rotasi host.
+   *
+   * 403 juga TIDAK memicu rotasi di sini — dan itu disengaja untuk 403 auth
+   * biasa (token mati: mencoba host lain hanya membuang waktu, chatCore akan
+   * me-refresh token). Tapi 403 entitlement (#3501) berbeda: host sandbox
+   * MENOLAK berdasarkan kepemilikan project, jadi host lain bisa saja menerima
+   * request yang sama. Itu ditangani terpisah di chatCore lewat
+   * shouldRotateHostOnEntitlement(), bukan di sini, supaya tidak mengubah
+   * perilaku 403 auth yang sudah benar.
    */
   shouldRetry(status, urlIndex) {
     if (super.shouldRetry(status, urlIndex)) return true;
     if (urlIndex + 1 >= this.getFallbackCount()) return false;
     return ANTIGRAVITY_TRANSIENT_STATUSES.has(status);
+  }
+
+  /**
+   * Rotasi host saat entitlement 403 (#3501) — dipakai chatCore, bukan loop
+   * retry internal executor.
+   *
+   * Alasannya: pada 403 entitlement, AKUN sehat dan token valid; yang menolak
+   * adalah HOST sandbox (gate kepemilikan project). Menggilir 60 akun di host
+   * yang sama hanya mengulang penolakan yang sama (~13-15s masing-masing),
+   * sementara `daily` menerima request yang sama tanpa masalah. Jadi satu
+   * percobaan ulang ke host berikutnya jauh lebih murah daripada satu akun
+   * berikutnya.
+   */
+  getHostForEntitlementRetry(currentUrl) {
+    const urls = this.getBaseUrls();
+    const idx = urls.indexOf(currentUrl);
+    if (idx === -1) return urls[0] || null;
+    return idx + 1 < urls.length ? urls[idx + 1] : null;
   }
 
   // sessionId comes from transformRequest output; base.execute runs transformRequest before

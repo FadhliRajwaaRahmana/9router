@@ -1,3 +1,47 @@
+# v0.5.96 (2026-09-20) — 9router-imagefix
+
+## Fixes
+- **Antigravity: 403 entitlement tidak lagi membakar 13-15 detik per akun, dan
+  rotasi kini ke HOST bukan ke akun.** Log produksi menunjukkan tiap akun
+  memakan 13-15 detik: refresh token (~1 detik, sia-sia — token-nya valid) lalu
+  request ulang ke HOST YANG SAMA dan 403 lagi (~13 detik). Enam puluh akun ×
+  ~30 detik = setengah jam untuk penolakan yang identik.
+
+  Dua perbaikan:
+  1. **Refresh token dilewati untuk 403 entitlement.** Google menjawab
+     `403 SUBSCRIPTION_REQUIRED` (#3501) dengan token yang sah — me-refresh-nya
+     tidak bisa mengubah hasil, hanya menambah latensi sebelum retry yang
+     pasti sama. Body dideteksi dari `clone()` sehingga `parseUpstreamError()`
+     di bawahnya tetap bisa membacanya.
+  2. **Retry ke host berikutnya dengan AKUN YANG SAMA.** 403 entitlement
+     adalah gerbang tingkat-HOST (sandbox menolak project yang tidak dikenali,
+     sementara `daily` menerima request yang sama), bukan kesalahan akun.
+     Menggilir 60 akun di host yang sama hanya mengulang penolakan identik;
+     satu percobaan ke host berikutnya jauh lebih murah dan bisa berhasil.
+     `403` tetap TIDAK memicu rotasi di loop internal executor, supaya
+     perilaku 403 auth biasa (token mati) tidak berubah.
+
+## Yang DIUJI dan GUGUR untuk 403 ini (jangan diulang)
+
+Sebelas hipotesis diuji langsung ke Google, semuanya gagal mereproduksi 403:
+
+- kuota habis — median `3p-weekly` **96% tersedia**, hanya 1 dari 61 akun di 0%
+- 6 akun yang 429 di log — semuanya OK saat diuji ulang
+- payload 0KB–188KB, tool 0–122, deskripsi tool 200B/800B
+- burst 12 request berturut-turut, token baru di-refresh
+- ketiga host untuk akun yang gagal
+- **multi-turn tool call** (0/1/3/10/30 turn dengan functionCall+functionResponse),
+  `toolConfig` VALIDATED/AUTO/omitted, thoughtSignature ada/tidak
+
+Yang TETAP terkonfirmasi: gate kepemilikan project di host sandbox
+(project asing → 403 dalam ~2,9 detik). Tapi 403 produksi memakan 13-15 detik,
+jadi ia bukan gate cepat itu — penyebab pastinya **belum teridentifikasi**.
+Perbaikan di rilis ini mengurangi kerusakan, bukan menyembuhkan.
+
+## Tests
+- 10 test di `unit/antigravity-project-isolation.test.js` (4 baru untuk rotasi host).
+- 86/86 lintas 8 suite Antigravity, lint bersih, build terverifikasi.
+
 # v0.5.95 (2026-09-20) — 9router-imagefix
 
 ## Fixes

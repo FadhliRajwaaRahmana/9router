@@ -117,3 +117,45 @@ describe("Antigravity project isolation", () => {
     expect(seen[0]).toBe("p-stabil");
   });
 });
+
+/**
+ * Regresi 2026-09-20 (lanjutan): 403 entitlement BUKAN masalah token, dan
+ * rotasi yang benar adalah HOST, bukan akun.
+ *
+ * Log produksi menunjukkan tiap akun memakan 13-15 detik: refresh token
+ * (~1s, sia-sia — token-nya valid) lalu request ulang ke HOST YANG SAMA dan
+ * 403 lagi (~13s). Enam puluh akun × 30 detik = setengah jam untuk penolakan
+ * yang identik.
+ */
+describe("Antigravity entitlement 403 — retry harus ke host lain, bukan akun lain", () => {
+  it("getHostForEntitlementRetry memajukan ke host berikutnya", () => {
+    const ex = new AntigravityExecutor();
+    const urls = ex.getBaseUrls();
+    expect(urls.length).toBeGreaterThan(1);
+
+    // Dari host pertama -> host kedua (bukan null, bukan host yang sama)
+    const next = ex.getHostForEntitlementRetry(urls[0]);
+    expect(next).toBe(urls[1]);
+    expect(next).not.toBe(urls[0]);
+  });
+
+  it("berhenti di host terakhir (tidak ada rotasi tanpa tujuan)", () => {
+    const ex = new AntigravityExecutor();
+    const urls = ex.getBaseUrls();
+    const last = urls[urls.length - 1];
+    expect(ex.getHostForEntitlementRetry(last)).toBeNull();
+  });
+
+  it("host tak dikenal jatuh ke host pertama, bukan crash", () => {
+    const ex = new AntigravityExecutor();
+    expect(ex.getHostForEntitlementRetry("https://contoh-tidak-dikenal.invalid")).toBe(ex.getBaseUrls()[0]);
+  });
+
+  it("403 TIDAK memicu rotasi host di loop internal executor (perilaku lama dipertahankan)", () => {
+    // Rotasi entitlement ditangani chatCore, bukan shouldRetry. 403 auth biasa
+    // (token mati) tetap tidak merotasi host — itu sudah benar.
+    const ex = new AntigravityExecutor();
+    expect(ex.shouldRetry(403, 0)).toBe(false);
+    expect(ex.shouldRetry(401, 0)).toBe(false);
+  });
+});
