@@ -128,22 +128,51 @@ describe("Antigravity project isolation", () => {
  * yang identik.
  */
 describe("Antigravity entitlement 403 — retry harus ke host lain, bukan akun lain", () => {
-  it("getHostForEntitlementRetry memajukan ke host berikutnya", () => {
-    const ex = new AntigravityExecutor();
-    const urls = ex.getBaseUrls();
-    expect(urls.length).toBeGreaterThan(1);
+  it("getHostForEntitlementRetry memajukan ke host berikutnya (URL PENUH, bukan base)", async () => {
+    // Regresi: versi pertama memakai urls.indexOf(currentUrl) dan selalu gagal
+    // karena currentUrl yang dikirim executor adalah URL PENUH
+    // (host + /v1internal:streamGenerateContent?alt=sse). Akibatnya retry
+    // selalu jatuh ke urls[0] (daily) alih-alih host berikutnya — terlihat di
+    // log produksi sebagai "retrying on daily" berulang.
+    const { setAntigravityHostMode } = await import("../../open-sse/providers/shared.js");
+    setAntigravityHostMode("all-hosts");
+    try {
+      const ex = new AntigravityExecutor();
+      const urls = ex.getBaseUrls();
+      expect(urls.length).toBeGreaterThan(1);
 
-    // Dari host pertama -> host kedua (bukan null, bukan host yang sama)
-    const next = ex.getHostForEntitlementRetry(urls[0]);
-    expect(next).toBe(urls[1]);
-    expect(next).not.toBe(urls[0]);
+      // Bangun URL persis seperti executor melakukannya
+      const fullUrl = ex.buildUrl(MODEL, true, 1, { projectId: "p" });
+      expect(fullUrl).toContain("/v1internal:");
+      expect(fullUrl).not.toBe(urls[1]); // memang URL penuh, bukan base
+
+      const next = ex.getHostForEntitlementRetry(fullUrl);
+      expect(next).toBe(urls[2]);      // host KETIGA, bukan host pertama
+      expect(next).not.toBe(urls[0]);
+    } finally {
+      setAntigravityHostMode("daily-only");
+    }
   });
 
-  it("berhenti di host terakhir (tidak ada rotasi tanpa tujuan)", () => {
+  it("dari host terakhir -> null (tidak ada rotasi tanpa tujuan)", async () => {
+    const { setAntigravityHostMode } = await import("../../open-sse/providers/shared.js");
+    setAntigravityHostMode("all-hosts");
+    try {
+      const ex = new AntigravityExecutor();
+      const urls = ex.getBaseUrls();
+      const fullUrl = ex.buildUrl(MODEL, true, urls.length - 1, { projectId: "p" });
+      expect(ex.getHostForEntitlementRetry(fullUrl)).toBeNull();
+    } finally {
+      setAntigravityHostMode("daily-only");
+    }
+  });
+
+  it("default daily-only: hanya satu host, tidak ada rotasi", () => {
     const ex = new AntigravityExecutor();
-    const urls = ex.getBaseUrls();
-    const last = urls[urls.length - 1];
-    expect(ex.getHostForEntitlementRetry(last)).toBeNull();
+    expect(ex.getBaseUrls().length).toBe(1);
+    expect(ex.getBaseUrls()[0]).toContain("daily-cloudcode-pa.googleapis.com");
+    // Tidak ada tujuan rotasi di host terakhir (dan satu-satunya).
+    expect(ex.getHostForEntitlementRetry(ex.getBaseUrls()[0])).toBeNull();
   });
 
   it("host tak dikenal jatuh ke host pertama, bukan crash", () => {

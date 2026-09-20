@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
+import { getActiveAntigravityHosts } from "../providers/shared.js";
 import { OAUTH_ENDPOINTS, ANTIGRAVITY_HEADERS, AG_DEFAULT_TOOLS, AG_TOOL_SUFFIX, ANTIGRAVITY_PROMPT_REWRITES } from "../config/appConstants.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { resolveSessionId, toNumericSessionId } from "../utils/sessionManager.js";
@@ -210,7 +211,18 @@ export class AntigravityExecutor extends BaseExecutor {
    */
   getHostForEntitlementRetry(currentUrl) {
     const urls = this.getBaseUrls();
-    const idx = urls.indexOf(currentUrl);
+    // currentUrl is the FULL url the executor built
+    // (https://host/v1internal:streamGenerateContent?alt=sse), so a plain
+    // indexOf against the bare base list never matches and this silently
+    // returned urls[0] — which is why every retry went to daily instead of the
+    // next host. Match on the ORIGIN instead.
+    let idx = -1;
+    try {
+      const origin = new URL(currentUrl).origin;
+      idx = urls.findIndex((u) => {
+        try { return new URL(u).origin === origin; } catch { return false; }
+      });
+    } catch { /* not a URL — fall through */ }
     if (idx === -1) return urls[0] || null;
     return idx + 1 < urls.length ? urls[idx + 1] : null;
   }
@@ -223,6 +235,20 @@ export class AntigravityExecutor extends BaseExecutor {
       "Authorization": `Bearer ${credentials.accessToken}`,
       "User-Agent": this.config.headers?.["User-Agent"] || ANTIGRAVITY_HEADERS["User-Agent"],
     };
+  }
+
+  /**
+   * Host list comes from the dashboard-selected preset, not the static
+   * registry value. Default is `daily-only` — see ANTIGRAVITY_HOST_PRESETS.
+   * Reading it per call (rather than at construction) means changing the
+   * dropdown takes effect without a restart.
+   */
+  getBaseUrls() {
+    try {
+      const active = getActiveAntigravityHosts();
+      if (Array.isArray(active) && active.length) return active;
+    } catch { /* fall through to the static list */ }
+    return super.getBaseUrls();
   }
 
   transformRequest(model, body, stream, credentials) {

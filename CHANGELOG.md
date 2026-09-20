@@ -1,3 +1,55 @@
+# v0.5.97 (2026-09-20) — 9router-imagefix
+
+## Features
+- **Antigravity: pilihan host lewat dashboard, default `Daily only`.** Sebelumnya
+  host list di-hardcode ke tiga host (daily + 2 sandbox). Sekarang ada dropdown
+  di **Providers → Antigravity → Host Antigravity**, tersimpan di settings, dan
+  berlaku pada request berikutnya **tanpa restart**.
+
+  Defaultnya **`Daily only`** — mengikuti perilaku 9Router upstream DAN
+  CLIProxyAPI, yang keduanya memakai `daily` saja dan mengandalkan rotasi AKUN
+  saat gagal, bukan rotasi host. Itu pilihan yang lebih aman karena host sandbox
+  memberlakukan gerbang tambahan: request dengan project yang tidak dikenali
+  ditolak `403 SUBSCRIPTION_REQUIRED (#3501)`, sementara `daily` menerimanya.
+
+  Tiga pilihan:
+
+  | mode | host |
+  |---|---|
+  | `Daily only` (default) | daily |
+  | `Daily + Autopush` | daily, autopush-sandbox |
+  | `Semua host` | daily, autopush-sandbox, staging-sandbox |
+
+  Preset sandbox tetap disediakan karena kapasitas Google bergeser — pada
+  2026-09-13 `daily` hanya 5% sukses untuk claude-opus sementara sandbox 100%.
+  Kalau itu terjadi lagi, cukup ganti dropdown alih-alih menunggu rilis baru.
+
+## Fixes
+- **`getHostForEntitlementRetry` selalu salah jatuh ke host pertama.** Fungsi
+  memakai `urls.indexOf(currentUrl)`, padahal `currentUrl` yang dikirim executor
+  adalah URL PENUH (`host + /v1internal:streamGenerateContent?alt=sse`), jadi
+  `indexOf` selalu `-1` dan fungsi mengembalikan `urls[0]`. Terlihat di log
+  produksi sebagai `retrying on daily-cloudcode-pa.googleapis.com` berulang,
+  bukan host berikutnya. Kini mencocokkan **origin**.
+
+- **Test yang menutupi bug itu diperbaiki.** Versi lama memanggil fungsi dengan
+  URL base (bukan URL penuh), jadi test lolos meski produksi rusak. Test baru
+  membangun URL lewat `buildUrl()` persis seperti executor melakukannya.
+
+## Notes
+- `open-sse/` tetap standalone: executor tidak membaca settings sendiri, app yang
+  mendorong mode host lewat `setAntigravityHostMode()`.
+- `transport.baseUrls` di registry tetap memuat ketiga host sebagai daftar
+  lengkap yang tersedia; executor yang menentukan mana yang dipakai.
+
+## Tests
+- 89/89 lintas 8 suite Antigravity. Test rotasi host kini menguji **kedua mode**
+  secara eksplisit (default daily = tidak ada rotasi; mode sandbox = rotasi jalan).
+- Lint bersih untuk file baru; 4 error lint di `page.js` sudah ada sebelumnya
+  (diverifikasi dengan `git stash`).
+- Build terverifikasi: `daily-only`, `antigravityHostMode`, `AntigravityHostCard`,
+  dan `getActiveAntigravityHosts` semuanya ada di bundle.
+
 # v0.5.96 (2026-09-20) — 9router-imagefix
 
 ## Fixes

@@ -9,6 +9,7 @@ import {
 } from "../services/auth.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { isAntigravityEntitlementError } from "../services/antigravityDomainBreaker.js";
+import { setAntigravityHostMode } from "open-sse/providers/shared.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
@@ -69,6 +70,16 @@ export async function handleChat(request, clientRawRequest = null) {
 
   // Enforce API key if enabled in settings
   const settings = await getSettings();
+
+  // Push the dashboard-selected Antigravity host preset into the engine.
+  // `open-sse/` cannot read settings itself (it must stay standalone), so the
+  // app is what tells it which hosts to use. Cheap and idempotent — it is a
+  // single assignment, and it means changing the dropdown takes effect on the
+  // next request without a restart.
+  if (settings.antigravityHostMode) {
+    setAntigravityHostMode(settings.antigravityHostMode);
+  }
+
   if (settings.requireApiKey) {
     if (!apiKey) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");

@@ -47,20 +47,38 @@ const BODY = { request: { contents: [{ role: "user", parts: [{ text: "hi" }] }],
 describe("Antigravity — rotasi host saat kapasitas habis", () => {
   beforeEach(() => { hostsTried.length = 0; });
 
-  it("maju ke host berikutnya saat 503 dan berhasil di sana", async () => {
+  it("mode sandbox: maju ke host berikutnya saat 503 dan berhasil di sana", async () => {
     const { AntigravityExecutor } = await import("../../open-sse/executors/antigravity.js");
+    const { setAntigravityHostMode } = await import("../../open-sse/providers/shared.js");
+    // Rotasi host hanya berlaku kalau lebih dari satu host aktif. Default
+    // sekarang daily-only (mengikuti upstream + CLIProxyAPI), jadi test ini
+    // menyalakan mode sandbox dulu.
+    setAntigravityHostMode("all-hosts");
+    try {
+      const ex = new AntigravityExecutor();
+
+      const res = await ex.execute({
+        model: "claude-opus-4-6-thinking",
+        body: BODY, stream: false, credentials: CREDS,
+        signal: AbortSignal.timeout(30000), log: LOG,
+      });
+
+      expect(hostsTried[0]).toMatch(/^daily-cloudcode-pa\./);
+      expect(hostsTried.length).toBeGreaterThan(1);
+      expect(hostsTried[1]).toMatch(/sandbox/);
+      expect(res?.response?.status).toBe(200);
+    } finally {
+      setAntigravityHostMode("daily-only");
+    }
+  }, 30000);
+
+  it("mode default: 503 pada daily-only TIDAK memutar host (tidak ada tujuan)", async () => {
+    const { AntigravityExecutor } = await import("../../open-sse/executors/antigravity.js");
+    const { setAntigravityHostMode } = await import("../../open-sse/providers/shared.js");
+    setAntigravityHostMode("daily-only");
     const ex = new AntigravityExecutor();
-
-    const res = await ex.execute({
-      model: "claude-opus-4-6-thinking",
-      body: BODY, stream: false, credentials: CREDS,
-      signal: AbortSignal.timeout(30000), log: LOG,
-    });
-
-    expect(hostsTried[0]).toMatch(/^daily-cloudcode-pa\./);
-    expect(hostsTried.length).toBeGreaterThan(1);
-    expect(hostsTried[1]).toMatch(/sandbox/);
-    expect(res?.response?.status).toBe(200);
+    expect(ex.getBaseUrls().length).toBe(1);
+    expect(ex.shouldRetry(503, 0)).toBe(false);
   }, 30000);
 
   it("tidak memutar host untuk error permanen (401 akun mati)", async () => {
@@ -83,9 +101,15 @@ describe("Antigravity — rotasi host saat kapasitas habis", () => {
     expect(ex.shouldRetry(429, last)).toBe(false);
   });
 
-  it("mempertahankan 429 sebagai pemicu rotasi (perilaku lama)", async () => {
+  it("mode sandbox: mempertahankan 429 sebagai pemicu rotasi (perilaku lama)", async () => {
     const { AntigravityExecutor } = await import("../../open-sse/executors/antigravity.js");
-    const ex = new AntigravityExecutor();
-    expect(ex.shouldRetry(429, 0)).toBe(true);
+    const { setAntigravityHostMode } = await import("../../open-sse/providers/shared.js");
+    setAntigravityHostMode("all-hosts");
+    try {
+      const ex = new AntigravityExecutor();
+      expect(ex.shouldRetry(429, 0)).toBe(true);
+    } finally {
+      setAntigravityHostMode("daily-only");
+    }
   });
 });

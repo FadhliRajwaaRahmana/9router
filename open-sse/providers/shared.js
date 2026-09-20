@@ -112,6 +112,77 @@ export const ANTIGRAVITY_IDE_BASE_URLS = [
   ...ANTIGRAVITY_IDE_FALLBACK_BASE_URLS,
 ];
 
+/**
+ * Host presets, dipilih dari dashboard (Providers → Antigravity → Host).
+ *
+ * Default `daily-only` mengikuti perilaku 9Router upstream DAN CLIProxyAPI:
+ * keduanya memakai `daily` saja dan mengandalkan rotasi AKUN saat gagal, bukan
+ * rotasi host. Itu pilihan yang lebih aman karena host sandbox memberlakukan
+ * gerbang tambahan — request dengan project yang tidak dikenali ditolak
+ * 403 SUBSCRIPTION_REQUIRED (#3501) — sementara `daily` menerimanya.
+ *
+ * Preset sandbox tetap tersedia karena kapasitas Google bergeser: pada
+ * 2026-09-13 `daily` hanya 5% sukses untuk claude-opus sementara sandbox 100%.
+ * Kalau itu terjadi lagi, pilih `all-hosts` dari dashboard alih-alih menunggu
+ * rilis baru.
+ */
+export const ANTIGRAVITY_HOST_PRESETS = {
+  "daily-only": {
+    label: "Daily only (default)",
+    hint: "Host resmi IDE. Rotasi akun saat gagal — paling aman.",
+    urls: [ANTIGRAVITY_IDE_BASE_URL],
+  },
+  "daily-autopush": {
+    label: "Daily + Autopush",
+    hint: "Tambah satu pool sandbox sebagai cadangan kapasitas.",
+    urls: [ANTIGRAVITY_IDE_BASE_URL, "https://autopush-cloudcode-pa.sandbox.googleapis.com"],
+  },
+  "all-hosts": {
+    label: "All hosts (daily + 2 sandbox)",
+    hint: "Kapasitas maksimum. Sandbox bisa menolak 403 #3501 pada sebagian akun.",
+    urls: [
+      ANTIGRAVITY_IDE_BASE_URL,
+      "https://autopush-cloudcode-pa.sandbox.googleapis.com",
+      "https://staging-cloudcode-pa.sandbox.googleapis.com",
+    ],
+  },
+};
+
+/** Resolve a preset key (or an explicit URL list) to the host list to use. */
+export function resolveAntigravityHosts(mode) {
+  if (Array.isArray(mode) && mode.length) return mode;
+  const preset = ANTIGRAVITY_HOST_PRESETS[mode];
+  return preset ? preset.urls : ANTIGRAVITY_HOST_PRESETS["daily-only"].urls;
+}
+
+/**
+ * Runtime host selection.
+ *
+ * `open-sse/` must stay standalone (it is usable without the Next.js app), so
+ * the executor cannot read the dashboard settings itself. The app pushes the
+ * chosen mode in here instead, and the executor reads it at request time.
+ *
+ * Module state, so it survives across requests in the same process. Default is
+ * `daily-only` — matching 9Router upstream and CLIProxyAPI, both of which never
+ * rotate hosts and rely on account rotation instead.
+ */
+let _antigravityHostMode = "daily-only";
+
+/** Called by the app when settings load or change. */
+export function setAntigravityHostMode(mode) {
+  if (mode === undefined || mode === null) return;
+  _antigravityHostMode = mode;
+}
+
+export function getAntigravityHostMode() {
+  return _antigravityHostMode;
+}
+
+/** The host list the executor should use right now. */
+export function getActiveAntigravityHosts() {
+  return resolveAntigravityHosts(_antigravityHostMode);
+}
+
 export const ANTIGRAVITY_IDE_USER_AGENT = `antigravity/ide/${ANTIGRAVITY_IDE_VERSION} darwin/arm64`;
 
 // Antigravity OAuth client credentials (public CLI client — duplicated in usage.js + src/lib/oauth)

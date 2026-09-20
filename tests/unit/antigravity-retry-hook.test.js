@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { AntigravityExecutor } from "../../open-sse/executors/antigravity.js";
 import antigravity from "../../open-sse/providers/registry/antigravity.js";
+import { setAntigravityHostMode } from "../../open-sse/providers/shared.js";
 
 const MAX = 10000;
 function res(status, headers = {}, body = null) {
@@ -85,25 +86,48 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
     ]);
   });
 
-  it("rotates host on capacity-exhaustion statuses but not on permanent errors", () => {
+  it("default daily-only: TIDAK ada rotasi host (perilaku upstream + CLIProxyAPI)", () => {
+    // Default sekarang daily-only = 1 host, jadi tidak ada tujuan rotasi.
+    // Ini disengaja: 9Router upstream dan CLIProxyAPI sama-sama memakai daily
+    // saja dan mengandalkan rotasi AKUN. Host sandbox punya gerbang tambahan
+    // (403 #3501 untuk project yang tidak dikenali).
+    setAntigravityHostMode("daily-only");
     const exec = new AntigravityExecutor();
-    const last = exec.getFallbackCount() - 1;
+    expect(exec.getBaseUrls().length).toBe(1);
 
-    // Status transien -> maju ke host berikutnya.
-    for (const status of [500, 502, 503, 504]) {
-      expect(exec.shouldRetry(status, 0)).toBe(true);
-    }
-    // 429 tetap berperilaku seperti sebelumnya.
-    expect(exec.shouldRetry(429, 0)).toBe(true);
-
-    // Di host terakhir tidak ada tujuan rotasi lagi.
     for (const status of [429, 500, 502, 503, 504]) {
-      expect(exec.shouldRetry(status, last)).toBe(false);
+      expect(exec.shouldRetry(status, 0)).toBe(false);
     }
-
-    // Error permanen tidak boleh memutar host — biar chatCore yang ganti akun.
+    // Error permanen tetap tidak memutar host.
     for (const status of [400, 401, 403, 404]) {
       expect(exec.shouldRetry(status, 0)).toBe(false);
+    }
+  });
+
+  it("mode sandbox: rotates host on capacity-exhaustion statuses but not on permanent errors", () => {
+    setAntigravityHostMode("all-hosts");
+    try {
+      const exec = new AntigravityExecutor();
+      const last = exec.getFallbackCount() - 1;
+
+      // Status transien -> maju ke host berikutnya.
+      for (const status of [500, 502, 503, 504]) {
+        expect(exec.shouldRetry(status, 0)).toBe(true);
+      }
+      // 429 tetap berperilaku seperti sebelumnya.
+      expect(exec.shouldRetry(429, 0)).toBe(true);
+
+      // Di host terakhir tidak ada tujuan rotasi lagi.
+      for (const status of [429, 500, 502, 503, 504]) {
+        expect(exec.shouldRetry(status, last)).toBe(false);
+      }
+
+      // Error permanen tidak boleh memutar host — biar chatCore yang ganti akun.
+      for (const status of [400, 401, 403, 404]) {
+        expect(exec.shouldRetry(status, 0)).toBe(false);
+      }
+    } finally {
+      setAntigravityHostMode("daily-only");
     }
   });
 
