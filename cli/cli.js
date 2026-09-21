@@ -580,13 +580,25 @@ async function showInterfaceMenu(latestVersion) {
 
   const selected = await selectMenu(`Choose Interface (v${pkg.version})`, menuItems, 0, subtitle);
 
+  // `selectMenu` mengembalikan -1 untuk dua hal yang SAMA SEKALI BUKAN "exit":
+  //   - ESC ditekan (input.js: resolve(-1))
+  //   - stdin bukan TTY, mis. CLI dijalankan dari skrip / terminal tanpa TTY
+  //
+  // Dulu keduanya jatuh ke `return "exit"` di bawah, dan pemanggilnya
+  // menjalankan cleanup() yang MEMBUNUH server. Akibatnya menekan ESC sekali
+  // saja sudah cukup untuk mematikan gateway — inilah "tiba-tiba berhenti".
+  // Sekarang: batalkan saja, jangan sentuh server.
+  if (selected === -1) return "back";
+
   const offset = latestVersion ? 1 : 0;
 
   if (latestVersion && selected === 0) return "update";
   if (selected === offset) return "web";
   if (selected === offset + 1) return "terminal";
   if (selected === offset + 2) return "hide";
-  return "exit";
+  // Indeks tak dikenal: jangan pernah menafsirkannya sebagai perintah mematikan
+  // server. Lebih baik tampilkan menu lagi.
+  return "back";
 }
 
 const MAX_RESTARTS = 2;
@@ -801,10 +813,20 @@ function startServer(updatePromise) {
           cleanup();
           process.exit(0);
         } else if (choice === "exit") {
+          // Satu-satunya jalur yang mematikan server: user BENAR-BENAR memilih
+          // "Exit" dari menu. ESC / stdin bukan TTY tidak lagi sampai ke sini.
           isShuttingDown = true;
           console.log("\nExiting...");
           cleanup();
           setTimeout(() => process.exit(0), 100);
+        } else {
+          // "back" — ESC ditekan atau stdin bukan TTY (mis. dijalankan dari
+          // skrip). Server TETAP HIDUP; kalau tidak ada TTY, jangan berputar
+          // tanpa akhir, cukup tunggu di sini.
+          if (!process.stdin.isTTY) {
+            console.log("\n💡 No TTY — server stays running. Press Ctrl+C to stop.");
+            return;
+          }
         }
       }
     } catch (err) {
@@ -830,22 +852,53 @@ function startServer(updatePromise) {
     });
   }
 
+  /**
+   * Matikan MITM di state yang SUNGGUHAN dipakai.
+   *
+   * Sebelumnya fungsi ini menulis ke `db.json`, padahal sejak migrasi SQLite
+   * state hidup di `db/data.sqlite` — jadi "disable MITM" tidak pernah
+   * tersimpan dan penyebab crash yang sama terulang di setiap siklus.
+   * SQLite juga tidak boleh ditulis dengan fs.writeFileSync mentah (akan
+   * merusak WAL), jadi kita pakai driver aplikasinya.
+   */
+  async function disableMitmInDb() {
+    try {
+      const { execFileSync } = require("child_process");
+      const script = `
+        const { DatabaseSync } = require("node:sqlite");
+        const path = require("path");
+        const dbPath = path.join(process.env.APPDATA || path.join(require("os").homedir(), "AppData", "Roaming"), "9router", "db", "data.sqlite");
+        const db = new DatabaseSync(dbPath);
+        const row = db.prepare("SELECT data FROM settings WHERE id = 1").get();
+        if (!row) { db.close(); process.exit(0); }
+        const s = JSON.parse(row.data);
+        if (s.mitmEnabled === true) {
+          s.mitmEnabled = false;
+          db.prepare("UPDATE settings SET data = ? WHERE id = 1").run(JSON.stringify(s));
+          console.log("MITM disabled");
+        }
+        db.close();
+      `;
+      execFileSync(RUNTIME, ["-e", script], { stdio: "ignore", timeout: 5000, windowsHide: true });
+    } catch { /* best effort — jangan sampai memperburuk keadaan */ }
+  }
+
   function tryRestart(code) {
     const aliveMs = Date.now() - serverStartTime;
     // Reset counter if last run was stable
     if (aliveMs >= RESTART_RESET_MS) restartCount = 0;
 
     if (restartCount >= MAX_RESTARTS) {
-      console.error(`\n⚠️  Server crashed ${MAX_RESTARTS} times. Disabling MIT and restarting...`);
-      try {
-        const dbPath = path.join(os.homedir(), process.platform === "win32" ? path.join("AppData", "Roaming", "9router", "db.json") : path.join(".9router", "db.json"));
-        if (fs.existsSync(dbPath)) {
-          const db = JSON.parse(fs.readFileSync(dbPath, "utf-8"));
-          if (db.settings) db.settings.mitmEnabled = false;
-          fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-        }
-      } catch { /* best effort */ }
+      console.error(`\n⚠️  Server crashed ${MAX_RESTARTS} times in a row. Disabling MITM and restarting...`);
+      // Hanya MITM yang perlu dibersihkan — proses privileged itu bisa
+      // tertinggal dan bentrok port. JANGAN panggil cleanup(): ia juga
+      // mematikan tray, sehingga ikon tray hilang setiap kali server crash.
+      disableMitmInDb();
+      try { killProxyByPidFile(); } catch { /* */ }
+      // Reset penuh: sesudah ini kita memperlakukan proses baru sebagai awal
+      // yang segar, bukan lanjutan dari rentetan crash sebelumnya.
       restartCount = 0;
+      serverStartTime = Date.now();
       server = spawnServer();
       attachServerEvents();
       return;
@@ -861,6 +914,7 @@ function startServer(updatePromise) {
     }
 
     setTimeout(() => {
+      serverStartTime = Date.now();
       server = spawnServer();
       attachServerEvents();
     }, delay);
