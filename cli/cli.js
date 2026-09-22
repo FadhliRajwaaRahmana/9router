@@ -122,6 +122,8 @@ let noBrowser = false;
 let skipUpdate = false;
 let showLog = false;
 let trayMode = false;
+// Set oleh --skip-kill (proses tray hasil spawn menu "background").
+let skipKill = false;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--port" || args[i] === "-p") {
@@ -136,6 +138,11 @@ for (let i = 0; i < args.length; i++) {
     showLog = true;
   } else if (args[i] === "--skip-update") {
     skipUpdate = true;
+  } else if (args[i] === "--skip-kill") {
+    // Dipakai oleh proses tray yang di-spawn dari menu "background": induknya
+    // sudah membereskan port dan proses lama, jadi memindai lagi hanya
+    // menciptakan balapan saling-bunuh antar kedua proses.
+    skipKill = true;
   } else if (args[i] === "--tray" || args[i] === "-t") {
     trayMode = true;
     process.env.TRAY_MODE = "1";
@@ -273,12 +280,22 @@ function killAllAppProcesses(appPort) {
           });
           const lines = output.split("\n").slice(1).filter(l => l.trim());
           lines.forEach(line => {
-            // Whitelist: real node process running 9router/cli.js, or next-server.
-            // Avoids killing editors/grep/strace/cursor that just have "9router" in cmdline.
+            // Whitelist: HANYA proses yang jelas milik instalasi 9router ini.
+            //
+            // Dulu ada `|| cmd.includes("next-server")` TANPA syarat lain.
+            // Akibatnya setiap proses Next.js mana pun (proyek lain di mesin
+            // yang sama) ikut di-taskkill /F. 9Router standalone sendiri TIDAK
+            // memakai nama itu — ia menjalankan app/custom-server.js — jadi
+            // cabang tersebut hanya merugikan.
+            //
+            // Sekarang wajib menyebut "9router" DAN salah satu penanda
+            // prosesnya, sehingga editor/grep/proyek lain tidak tersentuh.
             const cmd = line.toLowerCase();
             const isAppProcess =
-              (cmd.includes("node") && cmd.includes("9router") && (cmd.includes("cli.js") || cmd.includes("\\9router") || cmd.includes("/9router")))
-              || cmd.includes("next-server");
+              cmd.includes("9router") &&
+              cmd.includes("node") &&
+              (cmd.includes("cli.js") || cmd.includes("custom-server.js") ||
+               cmd.includes("\\9router") || cmd.includes("/9router"));
             if (isAppProcess) {
               const match = line.match(/^"(\d+)"/);
               if (match && match[1] && match[1] !== process.pid.toString()) {
@@ -299,12 +316,15 @@ function killAllAppProcesses(appPort) {
           const lines = output.split('\n');
 
           lines.forEach(line => {
-            // Whitelist: real node process running 9router/cli.js, or next-server.
-            // Avoids killing grep/strace/editors/cursor that incidentally match "9router".
+            // Whitelist: HANYA proses yang jelas milik instalasi 9router ini.
+            // Sama seperti cabang Windows — cabang `next-server` tanpa syarat
+            // dihapus karena membunuh proyek Next.js lain di mesin yang sama.
             const cmd = line.toLowerCase();
             const isAppProcess =
-              (cmd.includes("node") && cmd.includes("9router") && (cmd.includes("cli.js") || cmd.includes("/9router")))
-              || cmd.includes("next-server");
+              cmd.includes("9router") &&
+              cmd.includes("node") &&
+              (cmd.includes("cli.js") || cmd.includes("custom-server.js") ||
+               cmd.includes("/9router"));
             if (isAppProcess) {
               const parts = line.trim().split(/\s+/);
               const pid = parts[1];
@@ -540,9 +560,16 @@ if (!fs.existsSync(serverPath)) {
 
 // Start server immediately; run update check in parallel (not on the critical path).
 const updatePromise = checkForUpdate();
-killAllAppProcesses(port)
-  .then(() => killProcessOnPort(port))
-  .then(() => startServer(updatePromise));
+// `--skip-kill`: induk (menu "background") sudah membereskan proses lama dan
+// port sebelum spawn kita. Memindai lagi berarti dua proses saling membunuh
+// dalam jendela yang sama — server mati, tray mati, tak ada yang restart.
+if (skipKill) {
+  startServer(updatePromise);
+} else {
+  killAllAppProcesses(port)
+    .then(() => killProcessOnPort(port))
+    .then(() => startServer(updatePromise));
+}
 
 // Show interface selection menu
 async function showInterfaceMenu(latestVersion) {
@@ -795,9 +822,27 @@ function startServer(updatePromise) {
           }
 
           // Windows/Linux: spawn detached bgProcess (systray works fine in child)
-          console.log(`\n⏳ Starting background process... (tray icon will appear in ~3s)`);
+          //
+          // URUTAN PENTING — jangan spawn lalu langsung cleanup().
+          //
+          // Proses tray juga menjalankan killAllAppProcesses() di startup-nya,
+          // dan penapisnya cocok dengan "node + 9router + cli.js". Kalau kita
+          // membunuh server sementara tray baru masih memindai, keduanya bisa
+          // saling membunuh dalam jendela yang sama — server mati, tray mati,
+          // tak ada yang restart. Inilah "tiba-tiba berhenti".
+          //
+          // Jadi: matikan server DULU sampai benar-benar hilang, baru spawn tray
+          // dengan --skip-kill supaya ia tidak memindai/membunuh apa pun.
+          console.log(`\n⏳ Switching to background...`);
 
-          const bgProcess = spawn(process.execPath, ["--dns-result-order=ipv4first", __filename, "--tray", "--skip-update", "-p", port.toString()], {
+          isShuttingDown = true;
+          cleanup();
+          // Tunggu port benar-benar bebas; spawn sebelum ini membuat tray
+          // memindai proses yang masih sekarat.
+          await killProcessOnPort(port).catch(() => {});
+          await new Promise((r) => setTimeout(r, 500));
+
+          const bgProcess = spawn(process.execPath, ["--dns-result-order=ipv4first", __filename, "--tray", "--skip-update", "--skip-kill", "-p", port.toString()], {
             detached: true,
             stdio: "ignore",
             windowsHide: true,
@@ -809,9 +854,7 @@ function startServer(updatePromise) {
           console.log(`   Server: http://${displayHost}:${port}`);
           console.log(`\n💡 You can close this terminal. Right-click tray icon to quit.\n`);
 
-          // cleanup() kills server so bgProcess can claim the port fresh
-          cleanup();
-          process.exit(0);
+          setTimeout(() => process.exit(0), 200);
         } else if (choice === "exit") {
           // Satu-satunya jalur yang mematikan server: user BENAR-BENAR memilih
           // "Exit" dari menu. ESC / stdin bukan TTY tidak lagi sampai ke sini.
@@ -830,9 +873,18 @@ function startServer(updatePromise) {
         }
       }
     } catch (err) {
-      console.error("Error:", err.message);
-      cleanup();
-      process.exit(1);
+      // Jangan bunuh server karena error di MENU. Menu adalah lapisan UI;
+      // gateway harus tetap hidup meski UI-nya bermasalah. Dulu cabang ini
+      // memanggil cleanup() + process.exit(1), sehingga satu error UI sudah
+      // cukup mematikan seluruh layanan.
+      console.error("Menu error:", err.message);
+      if (!process.stdin.isTTY) {
+        console.log("\n💡 Server stays running. Press Ctrl+C to stop.");
+        return;
+      }
+      // Jeda sebentar lalu tampilkan menu lagi. TIDAK memanggil process.exit:
+      // error di lapisan UI tidak boleh mematikan gateway.
+      await new Promise((r) => setTimeout(r, 1000));
     }
   });
 
@@ -844,10 +896,15 @@ function startServer(updatePromise) {
     });
 
     server.on("close", (code) => {
-      if (isShuttingDown || code === 0) {
+      if (isShuttingDown) {
+        // Benar-benar diminta berhenti (SIGINT/SIGTERM/tray quit/menu Exit).
         process.exit(code || 0);
         return;
       }
+      // code === 0 TANPA isShuttingDown berarti server berhenti sendiri —
+      // mis. event loop habis atau proses induk terputus. Dulu cabang ini
+      // langsung process.exit(0) sehingga gateway mati diam-diam tanpa jejak.
+      // Sekarang diperlakukan sama seperti crash: dicatat lalu di-restart.
       tryRestart(code);
     });
   }
@@ -883,8 +940,26 @@ function startServer(updatePromise) {
     } catch { /* best effort — jangan sampai memperburuk keadaan */ }
   }
 
+  /**
+   * Catat setiap kejadian server berhenti ke berkas, supaya kejadian berikutnya
+   * bisa didiagnosis. Tanpa ini, "tiba-tiba berhenti" tidak meninggalkan bukti
+   * apa pun — crash log lama hanya ada di memori dan hilang bersama proses.
+   */
+  function logCrash(code, aliveMs) {
+    try {
+      const dir = path.join(getAppDataDir(), "logs");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, "server-restarts.log");
+      const stamp = new Date().toISOString();
+      const head = `[${stamp}] exit code=${code ?? "unknown"} alive=${Math.round(aliveMs / 1000)}s pid=${server.pid ?? "?"}`;
+      const body = crashLog.length ? "\n" + crashLog.map((l) => "    " + l).join("\n") : "";
+      fs.appendFileSync(file, head + body + "\n");
+    } catch { /* best effort */ }
+  }
+
   function tryRestart(code) {
     const aliveMs = Date.now() - serverStartTime;
+    logCrash(code, aliveMs);
     // Reset counter if last run was stable
     if (aliveMs >= RESTART_RESET_MS) restartCount = 0;
 
