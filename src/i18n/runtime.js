@@ -130,9 +130,20 @@ export async function initRuntimeI18n() {
   // Process existing DOM
   processElement(document.body);
   
-  // Watch for new nodes
+  // Pantau node BARU dan penulisan ulang teks di tempat.
+  //
+  // React memakai ulang text node saat re-render — hanya `nodeValue` yang
+  // berubah, sehingga yang muncul adalah mutasi `characterData` TANPA event
+  // `childList`. Mengamati `childList` saja membuat label yang diperbarui
+  // setelah render awal tidak pernah diterjemahkan.
+  //
+  // Sumber: upstream decolua/9router 910db749.
   const observer = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
+      if (mutation.type === "characterData") {
+        processTextNode(mutation.target);
+        return;
+      }
       mutation.addedNodes.forEach((node) => {
         if (node.nodeType === Node.ELEMENT_NODE) {
           processElement(node);
@@ -142,10 +153,11 @@ export async function initRuntimeI18n() {
       });
     });
   });
-  
+
   observer.observe(document.body, {
     childList: true,
     subtree: true,
+    characterData: true,
   });
 }
 

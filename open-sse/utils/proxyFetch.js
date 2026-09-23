@@ -322,6 +322,21 @@ async function createBypassRequest(parsedUrl, realIP, options) {
   });
 }
 
+/**
+ * Ubah header apa pun menjadi objek biasa.
+ *
+ * `{...new Headers({a:1})}` menghasilkan `{}` — instance Headers menyimpan
+ * entri di internal, bukan sebagai properti enumerable. Akibatnya semua header
+ * (termasuk Authorization) hilang saat disebar. Objek biasa, array pasangan,
+ * dan instance Headers semuanya ditangani di sini.
+ */
+function normalizeHeadersToObject(headers) {
+  if (!headers) return {};
+  if (Array.isArray(headers)) return Object.fromEntries(headers);
+  if (typeof headers.entries === "function") return Object.fromEntries(headers.entries());
+  return { ...headers };
+}
+
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   const targetUrl = typeof url === "string" ? url : url.toString();
 
@@ -329,8 +344,14 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   const vercelRelayUrl = normalizeString(proxyOptions?.vercelRelayUrl);
   if (vercelRelayUrl) {
     const parsed = new URL(targetUrl);
+    // `options.headers` bisa berupa instance Headers — dan `{...headers}`
+    // menghasilkan OBJEK KOSONG (Headers tidak punya properti enumerable),
+    // sehingga Authorization/Content-Type hilang dan relay membalas 401.
+    // Upstream memperbaiki ini di 6af26a9e; di fork belum ada yang mengirim
+    // instance Headers, tapi dinormalkan di sini agar tidak jadi jebakan
+    // laten bagi executor yang ditambahkan nanti.
     const relayHeaders = {
-      ...options.headers,
+      ...normalizeHeadersToObject(options.headers),
       "x-relay-target": `${parsed.protocol}//${parsed.host}`,
       "x-relay-path": `${parsed.pathname}${parsed.search}`,
     };
