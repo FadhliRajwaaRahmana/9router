@@ -487,12 +487,25 @@ export class AntigravityExecutor extends BaseExecutor {
 
     this._lastSessionId = transformedRequest.sessionId; // cached for buildHeaders (base.execute order)
 
+    // Klien Antigravity resmi TIDAK mengirim `requestType` sama sekali di jalur
+    // agent (chat). Mengirim `requestType: "agent"` — atau membiarkannya bocor
+    // lewat spread `...body` dari envelope — membuat Google memasukkan request
+    // ke bucket terpisah dan membalas 429 RESOURCE_EXHAUSTED TANPA details[],
+    // meski kuota tersedia. Inilah 429 generik yang selama ini sulit dilacak:
+    // tidak ada RetryInfo/quotaResetDelay karena penolakannya di tingkat
+    // routing, bukan kuota.
+    //
+    // Bucket `image_gen` dan `search` tidak terpengaruh dan tetap memakai
+    // requestType-nya sendiri.
+    //
+    // Sumber: upstream decolua/9router 5798b308.
+    delete body.requestType;
+
     return {
       ...body,
       project: projectId,
       model: body.model || model,
       userAgent: "antigravity",
-      requestType: "agent",
       requestId: buildIdeRequestId({ body, request: transformedRequest, credentials, model, requestType: "agent" }),
       request: transformedRequest
     };

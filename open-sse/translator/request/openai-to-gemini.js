@@ -315,10 +315,16 @@ function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigra
     }
   };
 
-  // Antigravity specific fields
-  if (isAntigravity) {
-    envelope.requestType = "agent";
-  } else {
+  // Antigravity specific fields.
+  //
+  // CATATAN: klien Antigravity resmi TIDAK mengirim `requestType` di jalur
+  // agent (chat). Mengirim `requestType: "agent"` memicu 429
+  // RESOURCE_EXHAUSTED tanpa details[] meski kuota tersedia — lihat catatan
+  // lengkap di executors/antigravity.js. Bucket image_gen/search tidak
+  // terpengaruh.
+  //
+  // Sumber: upstream decolua/9router 5798b308.
+  if (!isAntigravity) {
     // Keep safetySettings for Gemini CLI
     envelope.request.safetySettings = geminiCLI.safetySettings;
   }
@@ -343,7 +349,9 @@ export function wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentia
     model: model,
     userAgent: "antigravity",
     requestId: `agent-${generateUUID()}`,
-    requestType: "agent",
+    // TIDAK ada `requestType` — klien Antigravity resmi menghilangkannya di
+    // jalur agent (chat). Lihat catatan di wrapInCloudCodeEnvelope() dan
+    // executors/antigravity.js. Sumber: upstream decolua/9router 5798b308.
     request: {
       sessionId: toNumericSessionId(credentials?._clientSessionId) || deriveSessionId(credentials?.email || credentials?.connectionId),
       contents: [],
