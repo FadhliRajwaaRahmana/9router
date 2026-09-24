@@ -262,19 +262,41 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       setFetching(true);
     }
 
-    fetch(`/api/usage/stats?period=${period}`)
+    // Abaikan respons yang sudah tidak relevan: period bisa berubah lagi
+    // sebelum fetch selesai, dan respons lama akan menimpa yang baru.
+    const ac = new AbortController();
+    const requestedPeriod = period;
+
+    fetch(`/api/usage/stats?period=${requestedPeriod}`, { signal: ac.signal })
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
-        if (data) {
-          hasLoadedStats.current = true;
-          setStats((prev) => ({ ...prev, ...data }));
-        }
+        if (!data) return;
+        hasLoadedStats.current = true;
+        // REPLACE, bukan merge. Dengan merge, key yang tidak ada di respons
+        // baru (mis. byModel saat pindah dari "all" ke "today") tetap
+        // tertinggal dan angkanya tampak tidak berubah.
+        setStats((prev) => ({
+          ...prev,
+          ...data,
+          byProvider: data.byProvider ?? {},
+          byModel: data.byModel ?? {},
+          byAccount: data.byAccount ?? {},
+          byApiKey: data.byApiKey ?? {},
+          byEndpoint: data.byEndpoint ?? {},
+          last10Minutes: data.last10Minutes ?? [],
+        }));
       })
       .catch(() => {})
+      .catch((e) => {
+        // Abort bukan kegagalan — period berganti sebelum fetch selesai.
+        if (e?.name !== "AbortError") { /* diamkan; UI tetap menampilkan data lama */ }
+      })
       .finally(() => {
         setLoading(false);
         setFetching(false);
       });
+
+    return () => ac.abort();
   }, [period]);
 
   // SSE connection - real-time updates for activeRequests + recentRequests and current period stats
