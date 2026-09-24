@@ -32,6 +32,26 @@ export default {
     { id: "in", label: "India (印度)" },
   ],
   defaultRegion: "sgp",
+  // MiMo menjalankan DUA permukaan API yang terpisah dan TIDAK saling
+  // menerima kunci satu sama lain (diukur 24 Sep 2026):
+  //
+  //   platform (pay-as-you-go) : api.xiaomimimo.com
+  //     - kunci sk- dari console/api-keys
+  //     - saldo terpisah; kunci Token Plan ditolak di sini
+  //
+  //   Token Plan (langganan)   : token-plan-<region>.xiaomimimo.com
+  //     - kunci "Dedicated API Key" dari console/plan-manage
+  //     - kuota bulanan (mis. Lite = 4,1 M credits), BUKAN saldo
+  //     - kunci platform ditolak 401 "Invalid API Key"
+  //
+  // Karena itu permukaan dipilih PER KONEKSI lewat
+  // `providerSpecificData.mimoSurface` ("platform" | "token-plan"), bukan
+  // hardcode di registry. Region mengikuti `regions` di atas.
+  surfaces: [
+    { id: "platform", label: "Platform (pay-as-you-go)", host: "api.xiaomimimo.com" },
+    { id: "token-plan", label: "Token Plan (langganan)", hostTemplate: "token-plan-{region}.xiaomimimo.com" },
+  ],
+  defaultSurface: "platform",
   serviceKinds: ["llm", "tts"],
   transport: {
     baseUrl: "https://api.xiaomimimo.com/v1/chat/completions",
