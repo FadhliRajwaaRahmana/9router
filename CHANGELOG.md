@@ -1,3 +1,57 @@
+# v0.5.112 (2026-09-24) — 9router-imagefix
+
+## Fixes
+- **Dashboard: angka Usage "beku" saat period diganti — akar masalahnya di
+  i18n runtime, bukan di komponen Usage.** Gejalanya: pilih 7D/30D/60D/All,
+  angka kartu Overview tidak berubah sama sekali.
+
+  Diagnosis awal saya salah tiga kali berturut-turut (menyalahkan cache
+  browser, cache HTML, lalu merge state). Yang membongkarnya adalah inspeksi
+  **React fiber** di browser sungguhan: state React sudah BENAR
+  (`period: "7d"`, `totalRequests: 10075`) sementara DOM tetap menampilkan
+  `944` — jadi ada pihak lain yang menimpa DOM setelah React menulis.
+
+  Penyebabnya `processTextNode()` di `src/i18n/runtime.js`:
+  ```js
+  if (!node._originalText) node._originalText = node.nodeValue;  // sekali, permanen
+  const translated = translate(node._originalText);
+  if (translated !== node.nodeValue) node.nodeValue = translated; // timpa!
+  ```
+  React memakai **ulang** text node saat re-render (hanya `nodeValue` yang
+  berubah). Karena observer `characterData` (ditambahkan 0.5.111, adopsi
+  upstream `910db749`) memanggil `processTextNode` pada SETIAP penulisan,
+  setiap nilai baru hasil render React langsung ditimpa balik ke
+  `_originalText` — nilai dari render pertama.
+
+  Terbukti dengan uji langsung: menulis `"99999"` ke text node angka
+  dikembalikan ke `"947"` dalam 3 detik; properti `_originalText: "947"`
+  adalah jejaknya.
+
+  Perbaikan: `_originalText` diperbarui saat React menulis ulang node, dan
+  node yang **tidak punya terjemahan** tidak disentuh sama sekali — angka
+  murni milik React. Terjemahan yang pernah kita tulis tetap bisa dipulihkan
+  saat locale kembali ke `en`.
+
+  Terukur sebelum/sesudah pada browser sungguhan (klik Today → 7D → 30D → All):
+  | | Today | 7D | 30D | All |
+  |---|---|---|---|---|
+  | sebelum | 962 | 962 | 962 | 962 |
+  | sesudah | 963 | 10.094 | 33.288 | 54.749 |
+
+- **Usage: `.catch()` ganda membuat penanganan AbortError jadi kode mati.**
+  `fetch(...).catch(() => {}).catch((e) => {...})` — catch pertama menelan
+  semua error, sehingga catch kedua tidak pernah dijalankan. Digabung jadi
+  satu; error non-Abort kini dicatat ke console.
+
+## Catatan diagnostik (agar tidak terulang)
+- `AbortController` ADA di dalam bundle TIDAK membuktikan fix terkirim —
+  React/Next memakainya di banyak tempat. Verifikasi harus membaca kode di
+  sekitar `fetch` yang dituju.
+- Header `no-store` hanya berlaku untuk request SESUDAH perubahan; HTML lama
+  yang sudah ter-cache tetap menyajikan nama chunk lama.
+- `/api/usage/stats`, `/api/usage/chart`, dan `/api/usage/stream` adalah TIGA
+  jalur data terpisah. Semuanya harus diperiksa, bukan hanya `stats`.
+
 # v0.5.98 (2026-09-20) — 9router-imagefix
 
 ## Fixes

@@ -81,20 +81,47 @@ function processTextNode(node) {
   ];
   
   if (skipTags.includes(tagName)) return;
-  
-  // Store original text if not already stored
-  if (!node._originalText) {
+
+  // React memakai ULANG text node saat re-render — hanya `nodeValue` yang
+  // berubah, node-nya tetap sama. Jadi `_originalText` TIDAK boleh dianggap
+  // permanen: kalau nilai saat ini bukan yang terakhir KITA tulis, berarti
+  // React baru menulisnya, dan nilai itu adalah sumber kebenaran yang baru.
+  if (node._i18nWritten !== undefined && node.nodeValue !== node._i18nWritten) {
+    node._originalText = node.nodeValue;
+    node._i18nWritten = undefined;
+  }
+
+  if (node._originalText === undefined) {
     node._originalText = node.nodeValue;
   }
-  
-  // Use original text for translation
+
   const original = node._originalText;
   const translated = translate(original);
-  
+
+  if (translated === original) {
+    // Tidak ada terjemahan untuk teks ini → node milik React, JANGAN disentuh.
+    //
+    // Ini penyebab angka dashboard "beku": angka tidak punya terjemahan, tapi
+    // dulu tetap ditulis ulang dari `_originalText` yang basi — sehingga nilai
+    // baru hasil render React ("10075") langsung ditimpa balik ke nilai
+    // pertama ("944") setiap kali period diganti.
+    //
+    // Pengecualian: kalau KITA yang pernah menulis terjemahan ke node ini
+    // (mis. locale kembali ke "en" sehingga `translate()` mengembalikan teks
+    // apa adanya), pulihkan teks aslinya.
+    if (node._i18nWritten !== undefined && node.nodeValue !== original) {
+      node.nodeValue = original;
+      node._i18nWritten = undefined;
+    }
+    return;
+  }
+
   // Only update if different to avoid unnecessary DOM mutations
   if (translated !== node.nodeValue) {
     node.nodeValue = translated;
   }
+  // Catat apa yang KITA tulis, agar bisa dibedakan dari tulisan React.
+  node._i18nWritten = translated;
 }
 
 // Process all text nodes in element
@@ -160,6 +187,11 @@ export async function initRuntimeI18n() {
     characterData: true,
   });
 }
+
+// Diekspor HANYA untuk pengujian. `processTextNode` sengaja tidak dipakai di
+// luar modul ini, tapi bug "angka dashboard beku" (v0.5.112) hidup di sini dan
+// tidak bisa dijangkau lewat API publik tanpa browser sungguhan.
+export const __processTextNodeForTest = processTextNode;
 
 // Reload translations when locale changes
 export async function reloadTranslations() {

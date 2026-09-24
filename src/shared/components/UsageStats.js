@@ -286,10 +286,17 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           last10Minutes: data.last10Minutes ?? [],
         }));
       })
-      .catch(() => {})
       .catch((e) => {
-        // Abort bukan kegagalan — period berganti sebelum fetch selesai.
-        if (e?.name !== "AbortError") { /* diamkan; UI tetap menampilkan data lama */ }
+        // Abort BUKAN kegagalan — period berganti sebelum fetch selesai, dan
+        // itu memang yang kita inginkan. Selain itu, diamkan saja: UI tetap
+        // menampilkan data terakhir yang berhasil dimuat.
+        //
+        // Catatan: dulu ada DUA .catch() berurutan. Yang pertama menelan semua
+        // error, sehingga yang kedua tidak pernah dijalankan — penanganan
+        // AbortError-nya mati dan niatnya tidak terwujud.
+        if (e?.name !== "AbortError") {
+          console.warn("[usage] gagal memuat statistik:", e?.message || e);
+        }
       })
       .finally(() => {
         setLoading(false);
