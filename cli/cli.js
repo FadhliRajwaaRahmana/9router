@@ -571,6 +571,11 @@ if (skipKill) {
     .then(() => startServer(updatePromise));
 }
 
+// Logika menu tinggal di modul terpisah supaya bisa diuji tanpa menjalankan
+// CLI: cli.js ini mengeksekusi dirinya di module scope (startServer, bahkan
+// process.exit kalau standalone build tidak ada).
+const { buildInterfaceMenuItems, resolveMenuAction } = require("./src/cli/utils/interfaceMenu");
+
 // Show interface selection menu
 async function showInterfaceMenu(latestVersion) {
   const { selectMenu } = require("./src/cli/utils/input");
@@ -592,40 +597,10 @@ async function showInterfaceMenu(latestVersion) {
 
   const subtitle = `🚀 Server: \x1b[32m${serverUrl}\x1b[0m`;
 
-  const menuItems = [];
-
-  if (latestVersion) {
-    menuItems.push({ label: `Update to v${latestVersion} (current: v${pkg.version})`, icon: "⬆" });
-  }
-
-  menuItems.push(
-    { label: "Web UI (Open in Browser)", icon: "🌐" },
-    { label: "Terminal UI (Interactive CLI)", icon: "💻" },
-    { label: "Hide to Tray (Background)", icon: "🔔" },
-    { label: "Exit", icon: "🚪" }
-  );
-
+  const menuItems = buildInterfaceMenuItems(latestVersion, pkg.version);
   const selected = await selectMenu(`Choose Interface (v${pkg.version})`, menuItems, 0, subtitle);
 
-  // `selectMenu` mengembalikan -1 untuk dua hal yang SAMA SEKALI BUKAN "exit":
-  //   - ESC ditekan (input.js: resolve(-1))
-  //   - stdin bukan TTY, mis. CLI dijalankan dari skrip / terminal tanpa TTY
-  //
-  // Dulu keduanya jatuh ke `return "exit"` di bawah, dan pemanggilnya
-  // menjalankan cleanup() yang MEMBUNUH server. Akibatnya menekan ESC sekali
-  // saja sudah cukup untuk mematikan gateway — inilah "tiba-tiba berhenti".
-  // Sekarang: batalkan saja, jangan sentuh server.
-  if (selected === -1) return "back";
-
-  const offset = latestVersion ? 1 : 0;
-
-  if (latestVersion && selected === 0) return "update";
-  if (selected === offset) return "web";
-  if (selected === offset + 1) return "terminal";
-  if (selected === offset + 2) return "hide";
-  // Indeks tak dikenal: jangan pernah menafsirkannya sebagai perintah mematikan
-  // server. Lebih baik tampilkan menu lagi.
-  return "back";
+  return resolveMenuAction(selected, latestVersion, pkg.version);
 }
 
 const MAX_RESTARTS = 2;

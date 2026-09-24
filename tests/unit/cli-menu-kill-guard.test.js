@@ -37,26 +37,21 @@ describe("CLI — ESC/bukan-TTY tidak mematikan server", () => {
     expect(input).toMatch(/key\.name === "escape"\)\s*\{\s*cleanup\(\);\s*resolve\(-1\)/);
   });
 
-  it("showInterfaceMenu memetakan -1 ke 'back', BUKAN 'exit'", () => {
-    // Penjagaan eksplisit harus ada SEBELUM perhitungan offset.
-    expect(cli).toMatch(/if \(selected === -1\) return "back"/);
+  it("showInterfaceMenu memakai resolveMenuAction (satu sumber kebenaran)", () => {
+    // Logika pemetaan tinggal di interfaceMenu.js. Menguji PERILAKU-nya
+    // (bukan mencocokkan teks) ada di cli-menu-exit-guard.test.js — itulah
+    // yang seharusnya, karena pencocokan teks membuat bug "Exit tidak
+    // berfungsi" lolos di v0.5.112.
+    expect(cli).toMatch(/resolveMenuAction\(selected, latestVersion, pkg\.version\)/);
+    expect(cli).toMatch(/require\("\.\/src\/cli\/utils\/interfaceMenu"\)/);
   });
 
-  it("tidak ada lagi fallthrough yang mengembalikan 'exit' untuk indeks tak dikenal", () => {
-    // Pola lama: `return "exit";` sebagai nilai balik terakhir tanpa syarat.
-    const menuFn = cli.slice(
-      cli.indexOf("async function showInterfaceMenu"),
-      cli.indexOf("const MAX_RESTARTS")
-    );
-    expect(menuFn.length).toBeGreaterThan(0);
-    // Buang komentar dulu — komentar penjelas menyebut pola lama dan tidak
-    // boleh dihitung sebagai kode.
-    const code = menuFn.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
-    const returns = [...code.matchAll(/return "(update|web|terminal|hide|exit|back)"/g)].map((m) => m[1]);
-    // Nilai balik terakhir harus "back", bukan "exit".
-    expect(returns[returns.length - 1]).toBe("back");
-    // Tidak boleh ada SATU pun nilai balik "exit" dari fungsi menu.
-    expect(returns.filter((r) => r === "exit")).toHaveLength(0);
+  it("'Exit' tetap terjangkau — bug v0.5.112 tidak boleh kembali", () => {
+    // Perilaku lengkapnya diuji di cli-menu-exit-guard.test.js; di sini hanya
+    // memastikan menu memang mendeklarasikan aksi "exit".
+    const { buildInterfaceMenuItems } = require("../../cli/src/cli/utils/interfaceMenu.js");
+    const aksi = buildInterfaceMenuItems(null, "0.0.0").map((i) => i.action);
+    expect(aksi).toContain("exit");
   });
 
   it("'exit' hanya dieksekusi dari pilihan menu yang sah", () => {

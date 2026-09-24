@@ -1,3 +1,54 @@
+# v0.5.113 (2026-09-25) — 9router-imagefix
+
+## Fixes
+- **Menu CLI: opsi "Exit" tidak berfungsi — ini regresi dari perbaikan 0.5.104.**
+
+  Gejalanya: memilih "Exit" di menu "Choose Interface" tidak melakukan apa pun.
+  Menu muncul lagi, server tetap hidup.
+
+  Sebabnya indeks menu dibaca dengan konstanta offset hardcoded:
+
+  ```js
+  const offset = latestVersion ? 1 : 0;
+  if (selected === offset)     return "web";
+  if (selected === offset + 1) return "terminal";
+  if (selected === offset + 2) return "hide";
+  return "back";   // ← "Exit" (indeks 3/4) jatuh ke sini
+  ```
+
+  Menu punya 4 item tanpa update dan 5 dengan update, tapi **tidak ada satu pun
+  cabang yang menangani indeks "Exit"**. Nilai balik terakhir `"back"` dulu
+  memang menangkapnya — sampai 0.5.104 mengubahnya menjadi `"back"` demi
+  memperbaiki bug ESC. Perbaikan itu benar untuk ESC, tapi diam-diam mematikan
+  opsi "Exit" karena keduanya berbagi jalur yang sama.
+
+  Perbaikan: setiap item menu membawa `action`-nya sendiri, dan aksi dibaca
+  dari array item — bukan dari nomor yang dihitung manual. Bug kelas ini tidak
+  bisa terulang lagi: menambah atau mengurutkan ulang item tidak perlu
+  memperbarui dua tempat sekaligus.
+
+  Logika pemetaan dipindah ke `cli/src/cli/utils/interfaceMenu.js` (fungsi murni)
+  supaya bisa diuji tanpa menjalankan CLI — `cli.js` mengeksekusi dirinya di
+  module scope (`startServer`, bahkan `process.exit`), jadi tidak bisa
+  di-`require` dari test.
+
+  Perilaku yang sengaja dipertahankan: ESC dan stdin bukan-TTY tetap
+  menghasilkan `"back"` dan **tidak** mematikan server.
+
+- **Test `cli-menu-kill-guard` yang lama berhenti mencocokkan teks.** Ia mencari
+  pola `return "..."` di sumber `cli.js` untuk memastikan tidak ada nilai balik
+  `"exit"`. Setelah logika pindah ke modul terpisah, pola itu tidak ada lagi di
+  sana. Dua test yang bergantung pada bentuk kode diganti dengan pengujian
+  perilaku terhadap `interfaceMenu.js`.
+
+  Pelajaran: pencocokan teks membuat bug "Exit tidak berfungsi" lolos selama
+  dua rilis — test memverifikasi *bentuk* kode, bukan *perilaku*-nya. Yang baru
+  mengeksekusi fungsi sungguhan dan memeriksa nilai baliknya.
+
+  Test: `tests/unit/cli-menu-exit-guard.test.js` (10 test). Diverifikasi
+  menangkap bug: logika lama mengembalikan `back` untuk indeks Exit, logika
+  baru mengembalikan `exit`.
+
 # v0.5.112 (2026-09-24) — 9router-imagefix
 
 ## Fixes
