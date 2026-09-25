@@ -675,6 +675,10 @@ function startServer(updatePromise) {
 
   // Suppress all errors during shutdown (systray lib throws JSON parse errors)
   let isShuttingDown = false;
+  // Serah terima ke tray sedang berjalan: server memang dimatikan, tapi proses
+  // CLI ini HARUS tetap hidup untuk men-spawn tray. Berbeda dari isShuttingDown,
+  // yang berarti "keluar sekarang".
+  let isHandingOff = false;
   process.on("uncaughtException", (err) => {
     if (isShuttingDown) return;
     console.error("Error:", err.message);
@@ -810,6 +814,10 @@ function startServer(updatePromise) {
           // dengan --skip-kill supaya ia tidak memindai/membunuh apa pun.
           console.log(`\n⏳ Switching to background...`);
 
+          // `isHandingOff` HARUS diset sebelum cleanup(): SIGKILL memicu event
+          // "close" secara asinkron, dan tanpa penjagaan itu handler-nya
+          // memanggil process.exit() sebelum tray sempat di-spawn.
+          isHandingOff = true;
           isShuttingDown = true;
           cleanup();
           // Tunggu port benar-benar bebas; spawn sebelum ini membuat tray
@@ -824,6 +832,43 @@ function startServer(updatePromise) {
             env: { ...process.env }
           });
           bgProcess.unref();
+
+          // VERIFIKASI — jangan langsung menganggap tray berhasil.
+          //
+          // Server lama sudah dibunuh di atas; satu-satunya yang menyalakannya
+          // kembali adalah proses tray. Kalau tray gagal (PowerShell NotifyIcon
+          // tidak tersedia, crash saat start, port belum benar-benar bebas),
+          // pengguna ditinggal dengan gateway MATI dan tidak ada yang tahu.
+          // Inilah keluhan "Hide to Tray malah jadi mati".
+          //
+          // Jadi: tunggu sampai server benar-benar hidup. Kalau tidak, pulihkan
+          // di proses ini dan kembali ke menu — jangan keluar.
+          const trayBerhasil = await waitServerReady(port, { timeoutMs: 25000, intervalMs: 400 });
+
+          if (!trayBerhasil) {
+            console.log(`\n⚠️  Tray gagal menyalakan server — memulihkan di terminal ini.`);
+            // cleanup() sudah menandai keduanya; reset supaya server bisa
+            // dijalankan lagi dan cleanup berikutnya tetap bekerja.
+            isHandingOff = false;
+            isCleaningUp = false;
+            isShuttingDown = false;
+            try {
+              server = spawnServer();
+              attachServerEvents();
+            } catch (e) {
+              console.error("Gagal memulihkan server:", e.message);
+            }
+            const pulih = await waitServerReady(port, { timeoutMs: 20000, intervalMs: 400 });
+            if (pulih) {
+              console.log(`✅ Server kembali jalan: http://${displayHost}:${port}`);
+              console.log(`   Tray tidak aktif — pilih "Hide to Tray" lagi untuk mencoba ulang.\n`);
+            } else {
+              console.log(`❌ Server juga gagal dijalankan ulang. Cek log:`);
+              console.log(`   ${path.join(process.env.APPDATA || "", "9router", "logs", "server-restarts.log")}\n`);
+            }
+            // Jangan process.exit — biarkan loop menu hidup.
+            continue;
+          }
 
           console.log(`🔔 9Router is now running in background (PID: ${bgProcess.pid})`);
           console.log(`   Server: http://${displayHost}:${port}`);
@@ -866,11 +911,30 @@ function startServer(updatePromise) {
   function attachServerEvents() {
     server.on("error", (err) => {
       console.error("Failed to start server:", err.message);
+      // Serah terima ke tray: server memang sedang dimatikan, dan proses CLI
+      // ini TIDAK boleh keluar — ia masih harus men-spawn tray di bawah.
+      if (isHandingOff) return;
       if (!isShuttingDown) tryRestart();
       else { cleanup(); process.exit(1); }
     });
 
     server.on("close", (code) => {
+      // SERAH TERIMA KE TRAY — jangan keluar.
+      //
+      // Ini akar bug "Hide to Tray malah jadi mati". Urutannya:
+      //   isShuttingDown = true; cleanup();        ← SIGKILL server
+      //   await killProcessOnPort(port);           ← melepas kontrol ke event loop
+      //   ...                                       ← event "close" menyala DI SINI
+      //   spawn(... tray ...);                     ← tidak pernah tercapai
+      //
+      // Handler ini dulu melihat isShuttingDown === true lalu memanggil
+      // process.exit(), sehingga CLI mati sebelum sempat men-spawn tray:
+      // server sudah dibunuh, tray tidak pernah lahir → gateway mati total.
+      //
+      // Penjagaan ini harus TERPISAH dari isShuttingDown, karena pada jalur
+      // hide kita memang mematikan server tapi TIDAK ingin CLI ikut berhenti.
+      if (isHandingOff) return;
+
       if (isShuttingDown) {
         // Benar-benar diminta berhenti (SIGINT/SIGTERM/tray quit/menu Exit).
         process.exit(code || 0);

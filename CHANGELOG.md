@@ -1,3 +1,57 @@
+# v0.5.114 (2026-09-25) — 9router-imagefix
+
+## Fixes
+- **"Hide to Tray" mematikan gateway — CLI bunuh diri sebelum tray lahir.**
+
+  Gejala: memilih "Hide to Tray (Background)" membuat server mati total.
+  Harus dijalankan ulang manual.
+
+  Akarnya **balapan di event loop**, bukan logika spawn yang salah:
+
+  ```js
+  isShuttingDown = true;
+  cleanup();                       // ← SIGKILL server
+  await killProcessOnPort(port);   // ← melepas kontrol ke event loop
+                                   //    event "close" menyala DI SINI
+  spawn(... "--tray" ...);         // ← TIDAK PERNAH TERCAPAI
+  ```
+
+  `cleanup()` mengirim SIGKILL, lalu `await` berikutnya melepas kontrol ke
+  event loop. Tepat di situ event `close` server menyala — dan handler-nya
+  melihat `isShuttingDown === true` lalu memanggil `process.exit()`.
+  CLI mati sebelum baris `spawn` dijalankan: **server sudah dibunuh, tray
+  tidak pernah lahir.** Tidak ada yang menyalakannya kembali.
+
+  Terbukti dengan simulasi urutan kejadian (bukan pembacaan kode):
+  ```
+  1. isShuttingDown = true
+  2. cleanup() → SIGKILL
+  3. await → event 'close' menyala
+     handler: process.exit() → CLI MATI
+  4. spawn tray → TIDAK PERNAH TERCAPAI
+  ```
+
+  Perbaikan: flag `isHandingOff` yang **terpisah** dari `isShuttingDown`.
+  Ia diset SEBELUM `cleanup()`, dan kedua handler (`error` & `close`)
+  memeriksanya lebih dulu lalu `return` tanpa keluar. Pada jalur serah terima
+  kita memang ingin mematikan server — tapi CLI harus tetap hidup untuk
+  men-spawn tray.
+
+  Diverifikasi ulang dengan simulasi yang sama: `isHandingOff` →
+  handler `return` → spawn tray **tercapai** → gateway pulih.
+
+- **Verifikasi tray + jalur pemulihan.** Sebelumnya CLI menganggap tray
+  berhasil begitu `spawn()` dipanggil. Sekarang ia menunggu server benar-benar
+  hidup (`waitServerReady`, 25 detik). Kalau tray gagal — PowerShell
+  NotifyIcon tidak tersedia, crash saat start, port belum bebas — server
+  dinyalakan ulang di proses ini, pengguna diberi tahu, dan menu ditampilkan
+  lagi alih-alih keluar diam-diam.
+
+  Perilaku normalize: jalur "Exit" sengaja TIDAK memakai `isHandingOff` —
+  di sana kita memang ingin CLI keluar dan server mati.
+
+  Test: `tests/unit/cli-hide-to-tray-guard.test.js` (6 test).
+
 # v0.5.113 (2026-09-25) — 9router-imagefix
 
 ## Fixes
