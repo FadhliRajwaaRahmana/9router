@@ -19,6 +19,7 @@ import { getZedUsage } from "./usage/zed.js";
 import { getFreebuffUsage } from "./usage/freebuff.js";
 import { resolveQoderCredentials } from "./qoderModels.js";
 import { getGlmUsage } from "./usage/glm.js";
+import { getMetaCodeUsage } from "./usage/meta-code.js";
 import {
   getIflowUsage,
   getOllamaUsage,
@@ -60,10 +61,13 @@ const USAGE_HANDLERS = {
   deepseek: (c) => getDeepseekUsage(c.apiKey, c.proxyOptions),
   freebuff: (c) => getFreebuffUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   zed: (c) => getZedUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
+  // refreshToken = Meta `dca:` token; the mint call that returns quota rejects plain keys.
+  "meta-code": (c) => getMetaCodeUsage(c.refreshToken, c.proxyOptions, { force: c.force }),
 };
 
 export async function getUsageForProvider(connection, proxyOptions = null, options = {}) {
-  const { provider, accessToken, apiKey, providerSpecificData, projectId } = connection;
+  const { provider, accessToken, refreshToken, apiKey, providerSpecificData, projectId } =
+    connection;
   const providerDataWithProjectId = {
     ...(providerSpecificData || {}),
     ...(projectId ? { projectId } : {}),
@@ -74,6 +78,7 @@ export async function getUsageForProvider(connection, proxyOptions = null, optio
   return await handler({
     provider,
     accessToken,
+    refreshToken,
     apiKey,
     providerSpecificData,
     providerDataWithProjectId,

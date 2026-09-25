@@ -80,6 +80,13 @@ export class DefaultExecutor extends BaseExecutor {
       if (this.config.quirks?.dropClientMetadata) {
         delete transformed.client_metadata;
       }
+      // quirk: Responses-API upstreams (Meta) reject Chat-style top-level
+      // `reasoning_effort` with HTTP 400 — it must be nested as `reasoning.effort`.
+      if (this.config.quirks?.foldReasoningEffort && transformed.reasoning_effort != null) {
+        const effort = transformed.reasoning_effort;
+        delete transformed.reasoning_effort;
+        transformed.reasoning = { ...(transformed.reasoning || {}), effort };
+      }
       stripUnsupportedParams(this.provider, model, transformed);
     }
 

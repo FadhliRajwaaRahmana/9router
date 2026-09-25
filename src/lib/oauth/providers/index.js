@@ -8,6 +8,7 @@ import claude from "./claude.js";
 import codex from "./codex.js";
 import xai from "./xai.js";
 import grokCli from "./grok-cli.js";
+import metaCode from "./meta-code.js";
 import geminiCli from "./gemini-cli.js";
 import antigravity from "./antigravity.js";
 import iflow from "./iflow.js";
@@ -34,6 +35,7 @@ const PROVIDERS = {
   codex,
   xai,
   "grok-cli": grokCli,
+  "meta-code": metaCode,
   "gemini-cli": geminiCli,
   antigravity,
   iflow,

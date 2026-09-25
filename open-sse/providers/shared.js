@@ -202,3 +202,11 @@ export const GOOGLE_OAUTH_CLIENT = {
   clientId: "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
   clientSecret: "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"
 };
+
+// Meta Code (Muse Spark) device-code OAuth client — public client_id of the `muse` CLI
+// launcher (no secret; device grant, PKCE-less). Same class of public CLI client as
+// GOOGLE_OAUTH_CLIENT above: not a secret, and widely mirrored by other gateways
+// (CLIProxyAPI, pi, opencodex). Env var overrides it for forks that ship their own.
+export const META_CODE_OAUTH_CLIENT = {
+  clientId: process.env.META_CODE_OAUTH_CLIENT_ID?.trim() || "1031625952748946",
+};

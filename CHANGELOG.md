@@ -1,3 +1,57 @@
+# v0.5.115 (2026-09-25) — 9router-imagefix
+
+## Features
+- **Provider `meta-code` (alias `mc`) — langganan Muse Code dipakai langsung di 9Router.**
+
+  Sebelumnya langganan Muse Code hanya bisa dipakai lewat CLI `muse` (dokumentasi Meta:
+  *"This credential is for use with Muse Code only"*). Provider ini mereproduksi alur
+  login CLI-nya, jadi kredensial langganan bisa dipakai lewat 9Router seperti provider lain.
+
+  Alur autentikasi (device-code OAuth, sama seperti `muse login`):
+
+  ```
+  1. POST https://auth.meta.com/oidc/device/authorization/   → device_code + user_code
+  2. POST https://auth.meta.com/oidc/device/token/           → access_token "dca:…"
+  3. POST https://api.meta.ai/muse-code/key   (Bearer dca:)  → { api_key: "LLM|…",
+                                                                 is_subs_active,
+                                                                 subs_tier_name,
+                                                                 subs_usage: { window, weekly } }
+  ```
+
+  Yang di-mint di langkah 3 itulah key yang **ditagih pada tarif langganan**, bukan
+  pay-as-you-go. Mint bersifat idempoten — memanggil ulang mengembalikan key yang sama,
+  jadi re-mint otomatis pada 401/403 aman.
+
+  Isi:
+  - `open-sse/providers/registry/meta-code.js` — entry registry (5 model `muse-spark-*`,
+    transport `openai-responses` ke `api.meta.ai/v1/responses`).
+  - `open-sse/services/metaCode.js` — helper mint + parser `subs_usage` (dipakai bersama
+    oleh OAuth postExchange, token refresh, dan usage — DRY).
+  - `open-sse/services/usage/meta-code.js` — handler kuota 5-jam + mingguan, cache 60 detik.
+  - `src/lib/oauth/providers/meta-code.js` — device flow + mint.
+  - `open-sse/services/tokenRefresh/providers.js` — `refreshMetaCodeToken` (re-mint).
+  - `open-sse/providers/shared.js` — `META_CODE_OAUTH_CLIENT` (client id publik CLI muse,
+    bisa di-override via `META_CODE_OAUTH_CLIENT_ID`).
+
+  Dua quirk transport yang wajib, keduanya diverifikasi live:
+  - **`forceStream: true`** — translator Responses selalu mengirim `stream:true`; klien
+    JSON dirutekan lewat jalur SSE→JSON.
+  - **`quirks.foldReasoningEffort: true`** — Meta menolak `reasoning_effort` gaya Chat di
+    level atas dengan **HTTP 400** (*"unknown parameter `reasoning_effort`"*); harus
+    dipindah ke `reasoning.effort`. Quirk baru ini ditambahkan di
+    `open-sse/executors/default.js`.
+
+  Kuota hanya tersedia untuk koneksi OAuth: endpoint mint menolak API key biasa dengan 401,
+  jadi `features.usage` tanpa `usageApikey`.
+
+  Kredit: alur ini pertama kali di-reverse-engineer oleh `yandy-r/9router`
+  (`docs/plans/yan-6-meta-code/plan.md`). Di-port ke fork ini dengan penyesuaian:
+  quirk `foldReasoningEffort` ditulis sendiri (tidak ada di sumber aslinya), client id
+  dipindah ke `shared.js` mengikuti pola `GOOGLE_OAUTH_CLIENT`, dan `refreshToken`
+  ditambahkan ke ctx usage handler.
+
+  Test: `tests/unit/meta-code-provider.test.js` — 19 pemeriksaan.
+
 # v0.5.114 (2026-09-25) — 9router-imagefix
 
 ## Fixes
