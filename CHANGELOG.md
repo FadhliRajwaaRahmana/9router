@@ -1,3 +1,26 @@
+# v0.5.116 (2026-09-26) — 9router-imagefix
+
+## Fixes
+- **Freebuff: protokol sesi & chat disamakan dengan binary CLI resmi v0.0.199.**
+
+  Perbandingan dengan binary resmi (`freebuff.exe`, sumber kebenaran sebenarnya —
+  paket npm-nya hanya launcher) menemukan delapan perbedaan. Semua nilai diambil
+  dari binary, bukan tebakan.
+
+  | # | Sebelum | Sekarang | Kenapa |
+  |---|---|---|---|
+  | 1 | POST `/freebuff/session` | `/freebuff/session/admission` | rute klaim yang benar-benar dipakai CLI; 404/405 ditandai `session_admission_unsupported` |
+  | 2 | hanya `x-freebuff-model` | + `x-freebuff-wallet-spend-limit: "0"`, `x-freebuff-first-tab-discount: "0"`, `x-fb-timezone` | header yang CLI pasang di setiap panggilan sesi |
+  | 3 | `Authorization` saja | + `x-codebuff-api-key` | dual-auth di `/agent-runs` |
+  | 4 | — | `x-freebuff-acting-user-id` | identitas akun di chat; dari kredensial, fallback `GET /api/v1/me` (di-cache) |
+  | 5 | `allow_fallbacks: false` | `allow_fallbacks: true` + `data_collection: "deny"` (+ `only: ["anthropic"]` untuk Fable) | nilainya dihitung per model di binary, bukan konstanta |
+  | 6 | — | `llm_step_number: "1"` | metadata langkah agen |
+  | 7 | Fable = `base2-free-fable` | sama, tapi id model `claude-fable-5.1` | agent resmi menjalankan id ber-".1" |
+  | 8 | root agent salah | fallback `base2-free`, Fable `base2-free-fable` | `base3-free` tidak pernah ada di binary |
+
+  ⚠️ Akun uji sedang `banned` — perubahan ini terverifikasi lewat binary + unit
+  test (202/202), belum end-to-end ke upstream.
+
 # v0.5.115 (2026-09-25) — 9router-imagefix
 
 ## Features
