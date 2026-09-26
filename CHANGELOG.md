@@ -1,3 +1,23 @@
+# v0.5.118 (2026-09-26) — 9router-imagefix
+
+## Features
+- **Panel Live di halaman Usage (tab Overview).** Di bawah StackHead kini ada
+  bagian Live: request yang sedang berjalan (model, provider/akun, token
+  in/out, durasi berjalan) dan request terakhir yang selesai (model, provider,
+  token, waktu relatif "5s/3m/2h ago").
+
+  Datanya menumpang SSE `/api/usage/stream` yang sudah ada (event `pending`,
+  throttle ±1 dtk dari repo) — tanpa EventSource kedua. Waktu di-tick lokal
+  tiap detik dari `startedAt`/`timestamp`; angka token tetap milik server.
+  Estimasi input pra-TTFT dari ukuran body (tanda `~`) diganti angka asli
+  upstream begitu chunk ber-usage tiba. State `live` dipisah dari `stats`
+  periode sehingga panel tetap jalan saat ganti periode.
+
+## Tests
+- 2 test live baru di `tests/unit/db-sqlite-vs-lowdb.test.js` (baris live +
+  angka asli menang atas estimasi). 2 gagal di `force-stream-config` adalah
+  mock `headroom.js` yang basi — identik di checkout bersih, bukan regresi.
+
 # v0.5.117 (2026-09-26) — 9router-imagefix
 
 ## Features
