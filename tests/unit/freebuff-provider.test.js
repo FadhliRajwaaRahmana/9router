@@ -522,12 +522,29 @@ describe("freebuff run registration", () => {
     expect(rootAgentIdForModel("upstage/solar-pro4")).toBe("base3-free-solar-pro4");
     expect(rootAgentIdForModel("meta/muse-spark-1.2-contributor")).toBe("base3-free-muse-spark");
     expect(rootAgentIdForModel("anthropic/claude-fable-5")).toBe("base3-free-fable");
-    // Withdrawn upstream models are unmapped — they fall back, and the backend
-    // refuses their sessions anyway.
-    expect(rootAgentIdForModel("meta/muse-spark-1.3-contributor")).toBe("base2-free");
-    expect(rootAgentIdForModel("deepseek/deepseek-v4-pro")).toBe("base2-free");
-    expect(rootAgentIdForModel("minimax/minimax-m3")).toBe("base2-free");
-    expect(rootAgentIdForModel("some/unknown-model")).toBe("base2-free");
+    // Withdrawn upstream models are unmapped — they fall back.
+    //
+    // Fallback-nya WAJIB base3, bukan base2: harness CLI sudah pindah dari
+    // base2 ke base3, dan backend menolak root lama dengan 404 "No endpoints
+    // found". Fallback base2 berarti model yang tidak dikenal gagal 404
+    // alih-alih memakai root generik yang masih hidup.
+    expect(rootAgentIdForModel("meta/muse-spark-1.3-contributor")).toBe("base3-free");
+    expect(rootAgentIdForModel("deepseek/deepseek-v4-pro")).toBe("base3-free");
+    expect(rootAgentIdForModel("minimax/minimax-m3")).toBe("base3-free");
+    expect(rootAgentIdForModel("some/unknown-model")).toBe("base3-free");
+
+    // Tidak boleh ada satu pun jalur yang masih menghasilkan root base2 —
+    // itulah bug yang diperbaiki.
+    for (const m of [
+      "meta/muse-spark-1.3-contributor",
+      "deepseek/deepseek-v4-pro",
+      "minimax/minimax-m3",
+      "model/yang-tidak-dikenal",
+      "",
+      null,
+    ]) {
+      expect(rootAgentIdForModel(m), `model ${m} masih memakai root base2`).not.toContain("base2");
+    }
   });
 
   it("registers a run via POST /agent-runs and returns the runId", async () => {
@@ -830,5 +847,49 @@ describe("freebuff executor parseError", () => {
     expect(parsed.status).toBe(500);
     expect(parsed.message).toContain("bad");
     expect(parsed.resetsAtMs).toBeUndefined();
+  });
+});
+
+describe("freebuff User-Agent per jenis panggilan", () => {
+  // Upstream membedakan UA chat dan non-chat. CLI resmi memasang
+  // `ai-sdk/openai-compatible/1.0.0/codebuff` HANYA di panggilan chat
+  // (model-provider.ts); panggilan lain memakai UA runtime biasa, meniru
+  // fetch Bun bawaan. Sebelumnya keempat panggilan non-chat memakai
+  // `codebuff-cli/0.0.138` — versi paket yang sudah usang dan bukan UA
+  // yang dikirim CLI ke API.
+
+  it("panggilan non-chat memakai UA runtime, bukan UA paket", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ runId: "run-abc" }));
+    await startRun("tok-1", "deepseek/deepseek-v4-flash", null);
+    const [, opts] = fetchMock.mock.calls[0];
+    expect(opts.headers["User-Agent"]).toBe("Bun/1.3.11");
+    expect(opts.headers["User-Agent"]).not.toMatch(/codebuff-cli/);
+  });
+
+  it("registry memakai UA chat yang benar (versi 1.0.0, bukan 1.0)", async () => {
+    const { default: registry } = await import("../../open-sse/providers/registry/freebuff.js");
+    const ua = registry.transport.headers["User-Agent"];
+    expect(ua).toBe("ai-sdk/openai-compatible/1.0.0/codebuff");
+    // Versi tanpa patch (1.0) pernah dipakai dan tidak cocok dengan CLI.
+    expect(ua).not.toBe("ai-sdk/openai-compatible/1.0/codebuff");
+  });
+
+  it("tidak ada UA codebuff-cli yang tersisa di kode (non-komentar)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const { dirname, resolve } = await import("node:path");
+    const here = dirname(fileURLToPath(import.meta.url));
+    const berkas = [
+      resolve(here, "../../open-sse/executors/freebuff.js"),
+      resolve(here, "../../open-sse/providers/registry/freebuff.js"),
+      resolve(here, "../../open-sse/services/usage/freebuff.js"),
+      resolve(here, "../../src/lib/oauth/providers/freebuff.js"),
+    ];
+    for (const f of berkas) {
+      const isi = readFileSync(f, "utf8");
+      // Buang komentar supaya penyebutan di dokumentasi tidak dihitung kode.
+      const kode = isi.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+      expect(kode, `masih ada UA codebuff-cli di ${f}`).not.toMatch(/codebuff-cli/);
+    }
   });
 });

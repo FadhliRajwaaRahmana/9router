@@ -36,6 +36,22 @@ const SESSION_PATH = "/api/v1/freebuff/session";
 const RUN_PATH = "/api/v1/agent-runs";
 const SESSION_DEFAULT_TTL_MS = 60 * 60 * 1000; // active sessions live ~1h
 
+/**
+ * User-Agent per jenis panggilan — dipisah karena upstream membedakannya.
+ *
+ * `CHAT_UA` hanya untuk panggilan CHAT. CLI resmi memasang UA ini di
+ * `model-provider.ts` saja; ini yang membuat request dikenali sebagai klien
+ * openai-compatible resmi.
+ *
+ * `PLAIN_UA` untuk panggilan NON-CHAT (session, offers, agent-runs) — CLI
+ * mengirim UA runtime biasa di sana, meniru fetch Bun bawaan. Sebelumnya
+ * keempatnya memakai `codebuff-cli/0.0.138`, yaitu versi paket yang sudah
+ * usang (paket `freebuff` di npm kini 0.0.197) dan BUKAN UA yang dipakai CLI
+ * untuk panggilan API.
+ */
+const CHAT_UA = "ai-sdk/openai-compatible/1.0.0/codebuff";
+const PLAIN_UA = "Bun/1.3.11";
+
 // Chat statuses that mean our claimed session is stale and must be re-claimed
 // before retrying (mirrors the CLI's FreebuffGateErrorKind statuses).
 const SESSION_STALE_CODES = new Set([428, 409, 410]);
@@ -253,7 +269,17 @@ function sessionCacheKey(token, model) {
 }
 
 function rootAgentIdForModel(model) {
-  return FREE_ROOT_AGENT_BY_MODEL[model] || "base2-free";
+  // Fallback WAJIB base3, bukan base2.
+  //
+  // Harness CLI sudah pindah dari base2 ke base3, dan backend menolak root
+  // lama dengan 404 "No endpoints found" selama masa transisi (lihat catatan
+  // di FREE_ROOT_AGENT_BY_MODEL di atas). Fallback base2 berarti setiap model
+  // yang tidak ada di map — id baru, alias, atau salah ketik — gagal 404
+  // alih-alih memakai root yang masih hidup.
+  //
+  // `base3-free` adalah root generik tanpa model spesifik; upstream
+  // memperlakukannya sebagai entri default yang sah.
+  return FREE_ROOT_AGENT_BY_MODEL[model] || "base3-free";
 }
 
 // Retry transient network errors (ECONNRESET, TLS reset, …) on the session/
@@ -289,7 +315,7 @@ async function requestSession(token, model, proxyOptions) {
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
-      "User-Agent": "codebuff-cli/0.0.138",
+      "User-Agent": PLAIN_UA,
       "x-freebuff-model": model,
     },
   }, proxyOptions);
@@ -378,7 +404,7 @@ async function fetchSessionOffers(token, proxyOptions) {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
-      "User-Agent": "codebuff-cli/0.0.138",
+      "User-Agent": PLAIN_UA,
       Accept: "application/json",
     },
   }, proxyOptions);
@@ -466,7 +492,7 @@ async function startRun(token, model, proxyOptions) {
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
-      "User-Agent": "codebuff-cli/0.0.138",
+      "User-Agent": PLAIN_UA,
     },
     body: JSON.stringify({
       action: "START",
@@ -504,7 +530,7 @@ async function finishRun(token, runId, status, proxyOptions) {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
-        "User-Agent": "codebuff-cli/0.0.138",
+        "User-Agent": PLAIN_UA,
       },
       body: JSON.stringify({ action: "FINISH", runId, status }),
       signal: AbortSignal.timeout(10_000),

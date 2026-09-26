@@ -45,7 +45,11 @@ export default {
     baseUrl: "https://www.codebuff.com/api/v1/chat/completions",
     format: "openai",
     headers: {
-      "User-Agent": "ai-sdk/openai-compatible/1.0/codebuff",
+      // UA panggilan CHAT — CLI resmi memasang ini di model-provider.ts saja.
+      // Nilainya harus sama persis dengan CHAT_UA di
+      // open-sse/executors/freebuff.js; keduanya tempat berbeda untuk header
+      // yang sama, jadi kalau salah satu diubah, ubah yang lain juga.
+      "User-Agent": "ai-sdk/openai-compatible/1.0.0/codebuff",
     },
     retry: {
       429: { attempts: 2, delayMs: 2000 },

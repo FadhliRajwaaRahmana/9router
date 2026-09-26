@@ -25,6 +25,12 @@ import { FREEBUFF_CONFIG } from "../constants/oauth.js";
 // https://freebuff.com (www.codebuff.com would yield the wrong login link).
 const LOGIN_HOST = "https://freebuff.com";
 
+// UA untuk panggilan NON-chat (login code, poll status). Meniru fetch runtime
+// Bun yang dipakai CLI — sama dengan PLAIN_UA di
+// open-sse/executors/freebuff.js. UA khusus chat
+// (`ai-sdk/openai-compatible/1.0.0/codebuff`) hanya dipakai di endpoint chat.
+const FREEBUFF_PLAIN_UA = "Bun/1.3.11";
+
 const freebuff = {
   config: FREEBUFF_CONFIG,
   flowType: "device_code",
@@ -38,7 +44,11 @@ const freebuff = {
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
-          "User-Agent": "codebuff-cli/0.0.138",
+          // UA runtime biasa, bukan UA paket. CLI mengirim UA ini di panggilan
+          // non-chat (login, session, agent-runs); `codebuff-cli/0.0.138` yang
+          // dipakai sebelumnya adalah versi paket yang sudah usang (paket
+          // `freebuff` di npm kini 0.0.197) dan bukan UA yang dikirim CLI ke API.
+          "User-Agent": FREEBUFF_PLAIN_UA,
         },
         body: JSON.stringify({ fingerprintId }),
       },
@@ -99,7 +109,7 @@ const freebuff = {
         method: "GET",
         headers: {
           Accept: "application/json",
-          "User-Agent": "codebuff-cli/0.0.138",
+          "User-Agent": FREEBUFF_PLAIN_UA,
         },
       },
     );

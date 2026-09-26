@@ -80,7 +80,10 @@ export async function getFreebuffUsage(accessToken, providerSpecificData, proxyO
         method: "GET",
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          "User-Agent": "codebuff-cli/0.0.138",
+          // UA runtime biasa untuk panggilan non-chat (reads kuota lewat
+          // GET /freebuff/session). Sama dengan PLAIN_UA di
+          // open-sse/executors/freebuff.js — lihat catatan di sana.
+          "User-Agent": "Bun/1.3.11",
           Accept: "application/json",
         },
       },
