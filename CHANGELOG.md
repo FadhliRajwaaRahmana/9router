@@ -1,3 +1,107 @@
+# v0.5.117 (2026-09-26) — 9router-imagefix
+
+## Features
+- **Halaman Usage ditulis ulang: "Tumpukan Berlapis"** (menggantikan empat kartu
+  angka sejajar + chart + tabel).
+
+  Halaman ini sekarang satu tumpukan yang dibaca dari atas ke bawah: satu ringkasan
+  tebal, lalu lapis-lapis yang mengembang di tempat — provider → model → akun →
+  endpoint → request tunggal. Lapis induk tetap terbaca saat lapis anak terbuka,
+  jadi hierarki terlihat utuh dalam satu kolom, bukan sebagai tiga halaman.
+
+  Empat interaktivitas: drill-down, filter & pencarian, chart dengan brush rentang
+  waktu + tombol Peak/Reset, dan komposisi antar-dimensi dari `byProvider`/`byModel`.
+  Perbandingan periode **tidak** dibangun: API tidak punya periode pembanding, dan
+  meminjamkan konteks yang tidak ada sama buruknya dengan menghilangkannya diam-diam.
+
+- **Tiga mode nilai: `Cost` / `Tokens` / `Cost + Tokens`.** Mengganti mode
+  memindahkan angka yang jadi kepala dan basis peringkat lapis, bukan sekadar label.
+
+- **Rincian token di kepala: input / cached / output.** `cached` diperlakukan sebagai
+  **BAGIAN DARI** `input`, bukan komponen ketiga — sumbernya
+  `prompt_tokens_details.cached_tokens` (OpenAI), `cache_read_input_tokens` (Claude,
+  di dalam `input_tokens`), `prompt_cache_hit_tokens` (DeepSeek). Karena itu
+  `total = input + output` dan batangnya menulis "uncached input" + "cached (N% of
+  input)", bukan empat potongan yang bisa dijumlahkan.
+
+## Fixes
+- **Angka tidak lagi disingkat.** `fmtCost` berhenti membulatkan ke `$7.1K`, token
+  pakai `toLocaleString("en-US")` (`16,042,831,295`, bukan `16.0B`). Satu-satunya
+  singkatan yang tersisa adalah gutter sumbu-Y selebar 52px di chart.
+- **Angka periode lama di bawah label periode baru** (kelas bug yang sama dengan
+  0.5.109). Diukur: klik "All" → pada +300ms layar menampilkan `$0.95 / 739 requests`
+  berlabel `all time`, padahal sebenarnya `$7.1K / 58.107`. → `statsPeriod` disimpan
+  bersama `stats`, dan render hanya menerima stats saat keduanya cocok; selain itu
+  kerangka. Bukan angka periode lain, bukan pula `0` yang berpura-pura jadi jawaban.
+- **Tombol "Retry" tidak mengulang apa pun** — memanggil `router.refresh()` pada
+  client component, yang memuat ulang pohon server alih-alih effect data.
+- **Drill-down mengabaikan periode.** Ia menerima prop `period` tapi tidak pernah
+  memakainya, sehingga selalu menampilkan 25 request terakhir sepanjang waktu: di
+  bawah judul "today" muncul request berumur "52d". → `periodStart()` memetakan
+  period ke `startDate`, dengan pemetaan yang **harus sama** dengan `PERIOD_MS` di
+  `usageRepo.js` (`today` = tengah malam **lokal**, bukan UTC).
+- **Kolom Tokens di drill-down selalu `0`.** Komponen membaca `d.promptTokens`,
+  sementara baris tersimpan memakai `d.tokens.input_tokens` (507 baris) maupun
+  `prompt_tokens` (493 baris) — dua-duanya kini ditangani, termasuk cadangan cache
+  untuk baris Claude lama yang menyimpan input TANPA cache.
+- **Kolom Cost di drill-down selalu `—`, dan memang tidak akan pernah terisi.**
+  `buildRequestDetail` tidak punya field `cost`; terukur **0 dari 1.000** baris
+  memilikinya. Kolomnya dihapus, diganti **Latency** (`latency.total` ada di
+  1.000/1.000 baris). Kolom yang selalu kosong bukan informasi kurang — ia ruang
+  yang menuntut perhatian untuk memberi tahu bahwa tidak ada apa-apa.
+- **Tab "Logs" tidak terjangkau.** `page.js` merender `RequestLogger` untuk
+  `?tab=logs`, tapi kontrol tab hanya menawarkan Overview dan Details — jadi
+  tampilan itu hanya bisa dicapai dengan mengetik URL, dan saat aktif **tidak ada
+  tombol yang tersorot**. Opsinya ditambahkan.
+- **Empat kelas CSS dipakai tanpa token, sehingga menghasilkan nol CSS di Tailwind
+  v4:** `text-text-primary` (30×), `bg-bg-hover` (7×), `bg-bg-subtle` (6×) membuat
+  panel kehilangan latar dan teks kehilangan warna; `text-error`/`bg-error`/
+  `border-error` membuat banner gagal impor/ekspor tampil sebagai teks biasa.
+  → ditambahkan tokennya (`--color-error`, `--color-primary-strong`, `--text-subtle`),
+  bukan mengganti puluhan pemakaian kelas.
+- **Kontras AA.** Putih di atas `#E56A4A` hanya 3,23:1 → tombol mode aktif memakai
+  `--color-primary-strong` (`#a64027`, 6,21:1). `--color-text-subtle` dan
+  `--color-text-muted` versi terang juga gagal AA (2,44:1 dan 4,38:1 di `#F7F3EE`) —
+  nilainya ternyata **tertukar** antar tema, bukan salah; kini `#5F6673` / `#8B93A1`.
+- **Lapis "Accounts" menampilkan model, bukan akun** — labelnya `rawModel`, sama
+  dengan lapis Models, jadi terbaca sebagai daftar model kedua.
+- **Indentasi & garis lipatan tidak pernah dirender** (`depth={0}` untuk keempat
+  lapis) padahal keduanya adalah tanda tangan halaman.
+- **Rincian token hanya ada di `title`** — tak terjangkau keyboard, tak pernah muncul
+  di sentuh → `tabIndex={0}` + `aria-describedby` + `span.sr-only`.
+- **Cache-Control halaman dashboard.** Tanpa arahan eksplisit, Next memperlakukan
+  halaman ini sebagai statis: `/dashboard/usage` terukur mengirim
+  `s-maxage=31536000` (1 tahun) dengan `x-nextjs-cache: HIT`, sehingga HTML basi terus
+  disajikan dan browser memuat bundle lama meski versi baru sudah terpasang.
+  → `no-store` pada dokumen HTML; chunk ber-hash di bawah `/_next/static` tetap boleh
+  di-cache selamanya karena namanya berubah saat isinya berubah.
+- **a11y.** Ikon hias kini `aria-hidden="true"` (sebelumnya tombol Export terbaca
+  "download Export"), `SegmentedControl` punya `aria-pressed` (sebelumnya keadaan
+  terpilih hanya tersampaikan lewat warna). Terukur: 41 ikon di halaman Usage,
+  0 tanpa `aria-hidden`.
+
+## Removed
+- **1.812 baris kode mati**, 7 berkas: `shared/components/UsageStats.js` (572),
+  `usage/components/ProviderTopology.js` (487), `UsageTable.js` (255),
+  `ProviderLimits/ProviderLimitCard.js` (186), `UsageChart.js` (141),
+  `ProviderLimits/QuotaProgressBar.js` (132), `OverviewCards.js` (39) — plus
+  dependensi `@xyflow/react`, entri `optimizePackageImports`-nya, dan ~85 baris CSS
+  topologi (`@keyframes topology-*`, `.topology-router-*`, `.react-flow-controls-custom`).
+
+  **Jebakan yang hampir menjatuhkan ini:** `src/shared/components/index.js` mengekspor
+  `export { default as UsageStats } from "./UsageStats"`, dan webpack me-resolve baris
+  itu **meski tidak ada yang mengimpornya** — tree-shaking tidak menyelamatkannya.
+  Menghapus berkasnya tanpa menghapus baris barrel = `next build --webpack` gagal total.
+- `tests/unit/usage-html-cache-probe.test.js` — nol `expect()`, path absolut yang
+  di-hardcode, dan mencari pola chunk milik komponen yang sudah tiada. Digantikan
+  `scripts/check-usage-html-cache.mjs`, yang harus dijalankan dan hasilnya dibaca.
+
+## Tests
+- `tests/unit/usage-period-switch.test.js` **diretARGET ulang** dari `UsageStats.js`
+  (kode mati) ke `stack/index.js` (kode hidup), plus satu tes penjaga bahwa `page.js`
+  memang merender `./components/stack`. Penjaga regresi yang mengawal kode mati lebih
+  buruk daripada tidak ada penjaga — ia memberi rasa aman yang salah.
+
 # v0.5.116 (2026-09-26) — 9router-imagefix
 
 ## Fixes

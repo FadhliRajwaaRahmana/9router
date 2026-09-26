@@ -65,7 +65,11 @@ const nextConfig = {
     // Cache fetch responses across HMR refreshes for faster dev reloads.
     serverComponentsHmrCache: true,
     // Tree-shake heavy barrel imports to cut compile + bundle size
-    optimizePackageImports: ["@xyflow/react", "@dnd-kit/core", "@dnd-kit/sortable", "material-symbols", "marked"],
+    // @xyflow/react dihapus 26 Sep 2026: satu-satunya pemakainya adalah
+    // ProviderTopology, yang ikut dihapus bersama komponen Usage lama.
+    // Membiarkannya di sini bukan error, tapi ia menyuruh bundler
+    // mengoptimalkan paket yang tidak pernah diimpor.
+    optimizePackageImports: ["@dnd-kit/core", "@dnd-kit/sortable", "material-symbols", "marked"],
   },
   webpack: (config, { isServer }) => {
     // Ignore fs/path modules in browser bundle

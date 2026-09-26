@@ -2,8 +2,9 @@
 
 import { Suspense, useState, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
+import { RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
 import RequestDetailsTab from "./components/RequestDetailsTab";
+import UsageStackConnected from "./components/stack";
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -102,9 +103,17 @@ function UsageContent() {
     <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
       {/* Tabs + export/import + period selector on same row */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        {/* "Logs" HARUS ada di daftar ini. `activeTab` menerima tab=logs dan
+            baris 188 merender RequestLogger untuknya, tapi selama opsinya
+            tidak ada di sini tidak ada satu pun tombol yang menuju ke sana —
+            tampilan itu hanya terjangkau kalau operator mengetik URL-nya
+            sendiri, dan saat aktif TIDAK ADA tombol yang tersorot karena
+            `value` tidak cocok dengan opsi mana pun. Menambahkannya sekaligus
+            memperbaiki dua hal itu. */}
         <SegmentedControl
           options={[
             { value: "overview", label: "Overview" },
+            { value: "logs", label: "Logs" },
             { value: "details", label: "Details" },
           ]}
           value={activeTab}
@@ -122,7 +131,7 @@ function UsageContent() {
                 className="flex items-center gap-1 rounded-lg border border-border bg-bg-subtle px-2.5 py-1.5 text-xs font-medium text-text-muted transition-colors hover:bg-bg-hover hover:text-text disabled:opacity-50"
                 title="Export all usage history & tokens to JSON file"
               >
-                <span className="material-symbols-outlined text-[15px]">download</span>
+                <span className="material-symbols-outlined text-[15px]" aria-hidden="true">download</span>
                 <span>Export</span>
               </button>
               <button
@@ -132,7 +141,7 @@ function UsageContent() {
                 className="flex items-center gap-1 rounded-lg border border-border bg-bg-subtle px-2.5 py-1.5 text-xs font-medium text-text-muted transition-colors hover:bg-bg-hover hover:text-text disabled:opacity-50"
                 title="Import usage backup JSON file (merge tokens)"
               >
-                <span className="material-symbols-outlined text-[15px]">upload</span>
+                <span className="material-symbols-outlined text-[15px]" aria-hidden="true">upload</span>
                 <span>Import</span>
               </button>
               <input
@@ -163,19 +172,25 @@ function UsageContent() {
           }`}
         >
           <span>{backupStatus.message}</span>
+          {/* Ikon dari sistem yang sama dengan sisa halaman ini. Sebelumnya
+              glyph `✕` — satu-satunya karakter Unicode yang berdiri sebagai
+              ikon, dan bentuknya berbeda dari `close` di FilterBar. */}
           <button
             type="button"
             onClick={() => setBackupStatus({ type: "", message: "" })}
-            className="text-text-muted hover:text-text"
+            aria-label="Dismiss"
+            className="shrink-0 rounded p-0.5 text-text-muted transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
           >
-            ✕
+            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+              close
+            </span>
           </button>
         </div>
       )}
 
       {activeTab === "overview" && (
         <Suspense fallback={<CardSkeleton />}>
-          <UsageStats period={period} setPeriod={setPeriod} hidePeriodSelector />
+          <UsageStackConnected period={period} />
         </Suspense>
       )}
       {activeTab === "logs" && <RequestLogger />}
