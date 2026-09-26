@@ -33,7 +33,14 @@ import { markPoolUnfit, clearPoolUnfit } from "../services/proxyPoolFitness.js";
  * codebuff_metadata.freebuff_instance_id.
  */
 const SESSION_PATH = "/api/v1/freebuff/session";
+// Endpoint KLAIM yang dipakai CLI resmi — bukan SESSION_PATH. Binary 0.0.199
+// mendefinisikannya sebagai konstanta terpisah (`HLA`) dan memakai POST ke sini
+// untuk admit; POST ke /session langsung tidak pernah dilakukan CLI.
+// Binary juga menangani 404/405 dari endpoint ini sebagai
+// `session_admission_unsupported` dan menyuruh update CLI.
+const SESSION_ADMISSION_PATH = "/api/v1/freebuff/session/admission";
 const RUN_PATH = "/api/v1/agent-runs";
+const ME_PATH = "/api/v1/me";
 const SESSION_DEFAULT_TTL_MS = 60 * 60 * 1000; // active sessions live ~1h
 
 /**
@@ -52,6 +59,60 @@ const SESSION_DEFAULT_TTL_MS = 60 * 60 * 1000; // active sessions live ~1h
 const CHAT_UA = "ai-sdk/openai-compatible/1.0.0/codebuff";
 const PLAIN_UA = "Bun/1.3.11";
 
+/**
+ * Header protokol sesi — nama-namanya diambil persis dari binary CLI 0.0.199
+ * (konstanta `r$A`, `s$A`, `e$A`, `i2`, `$LA`, `LLA`, `ILA`, `ELA`, `TTA`,
+ * `DLA`, `LQA`, `$QA`). Sebelumnya hanya `x-freebuff-model` yang dikirim.
+ *
+ * `x-freebuff-wallet-spend-limit: "0"` dan `x-freebuff-first-tab-discount: "0"`
+ * adalah NILAI JUJUR yang CLI sendiri pasang di setiap panggilan sesi: akun ini
+ * tidak membelanjakan wallet dan tidak mengklaim diskon tab pertama. Keduanya
+ * dipasang tanpa syarat (bukan hanya saat false) — lihat fungsi `VB` di binary:
+ *   L = { Authorization, ...AQA(), [TTA]: firstTabDiscount ? "1" : "0" }
+ *   if (H === "POST") { ...; L[e$A] = String(walletSpendLimit ?? 0) }
+ *
+ * `x-fb-timezone` = zona waktu IANA dari mesin yang menjalankan gateway
+ * (binary: `Intl.DateTimeFormat().resolvedOptions().timeZone`). Dipakai
+ * server untuk menghitung jendela reset harian.
+ */
+const HEADER_MODEL = "x-freebuff-model";
+const HEADER_INSTANCE = "x-freebuff-instance-id";
+const HEADER_WALLET_SPEND_LIMIT = "x-freebuff-wallet-spend-limit";
+const HEADER_FIRST_TAB_DISCOUNT = "x-freebuff-first-tab-discount";
+const HEADER_TIMEZONE = "x-fb-timezone";
+const HEADER_ACTING_USER_ID = "x-freebuff-acting-user-id";
+const HEADER_API_KEY = "x-codebuff-api-key";
+// Dipasang HANYA di GET status saat kita sudah memegang instance id — binary:
+//   if (H === "GET" && $.instanceId) { L[ILA] = "1"; if (!$.compact) L[$LA] = "1" }
+const HEADER_HEARTBEAT = "x-freebuff-heartbeat";
+const HEADER_INCLUDE_UNUSED = "x-freebuff-include-unused-rate-limits";
+
+// Zona waktu IANA mesin ini. `Intl` bisa melempar di runtime tanpa data
+// timezone lengkap — CLI membungkusnya try/catch dan menghilangkan header
+// kalau gagal, jadi kita ikuti (header kosong lebih buruk daripada tidak ada).
+function localTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
+// Header sesi bersama: dipasang di SEMUA panggilan /freebuff/session
+// (admission, status GET, release DELETE) persis seperti `sessionHeaders()`
+// di binary. `extra` menimpa/menambah per pemanggilan.
+function sessionHeaders(token, extra = {}) {
+  const tz = localTimezone();
+  return {
+    Authorization: `Bearer ${token}`,
+    "User-Agent": PLAIN_UA,
+    [HEADER_WALLET_SPEND_LIMIT]: "0",
+    [HEADER_FIRST_TAB_DISCOUNT]: "0",
+    ...(tz ? { [HEADER_TIMEZONE]: tz } : {}),
+    ...extra,
+  };
+}
+
 // Chat statuses that mean our claimed session is stale and must be re-claimed
 // before retrying (mirrors the CLI's FreebuffGateErrorKind statuses).
 const SESSION_STALE_CODES = new Set([428, 409, 410]);
@@ -65,7 +126,11 @@ const SESSION_STALE_CODES = new Set([428, 409, 410]);
 // renders from that payload). Offer state is per-account and cached briefly —
 // the pool can reopen at any time, so a closed offer must NOT set a long
 // cooldown.
-const OFFER_GATED_MODELS = new Set(["anthropic/claude-fable-5"]);
+// Id wire Fable: binary resmi memakai "anthropic/claude-fable-5.1" — agent
+// `base2-free-fable` mendeklarasikan model itu, dan id TANPA ".1" tidak pernah
+// muncul sebagai model yang dijalankan agent mana pun (hanya di daftar tipe TS).
+const FABLE_MODEL = "anthropic/claude-fable-5.1";
+const OFFER_GATED_MODELS = new Set([FABLE_MODEL]);
 const OFFER_CACHE_TTL_MS = 45_000;
 
 // The free tier rejects requests whose first system message doesn't open with
@@ -158,7 +223,7 @@ const FREE_ROOT_AGENT_BY_MODEL = {
   "upstage/solar-pro4": "base3-free-solar-pro4",
   "meta/muse-spark-1.2-contributor": "base3-free-muse-spark",
   // Fable: peta base2 satu-satunya yang memuatnya (lihat catatan di atas).
-  "anthropic/claude-fable-5": "base2-free-fable",
+  "anthropic/claude-fable-5.1": "base2-free-fable",
 };
 
 // Agent id yang BENAR-BENAR terdefinisi di binary resmi. Dipakai untuk
@@ -200,12 +265,14 @@ const fbState = (globalThis[FB_STATE_KEY] ??= {
   modelLockCooldowns: new Map(), // `${token}::${model}` -> expiresAt (ms)
   poolLimitCooldowns: new Map(), // `${proxyKey}::${model}` -> expiresAt (ms)
   offerCache: new Map(),        // `${token}` -> { fetchedAt, offers: [] } (limited-offer rows)
+  userIdCache: new Map(),       // `${token}` -> id akun dari GET /api/v1/me
 });
 const sessionCache = fbState.sessionCache;
 const inflight = fbState.inflight;
 const modelLockCooldowns = fbState.modelLockCooldowns;
 const poolLimitCooldowns = fbState.poolLimitCooldowns;
 const offerCache = fbState.offerCache;
+const userIdCache = fbState.userIdCache;
 
 const MODEL_LOCK_COOLDOWN_MS = 10 * 60 * 1000; // session bound to another model (~1h) — re-check every 10 min
 const POOL_LIMITED_COOLDOWN_MS = 5 * 60 * 1000; // IP tier refuses this model — try a different pool/relay
@@ -358,18 +425,30 @@ async function requestSession(token, model, proxyOptions) {
   // checked before the POST so a closed offer never burns a claim attempt.
   await guardOfferClaim(token, model, proxyOptions);
 
-  const response = await fetchWithNetworkRetry(`${sessionOrigin()}${SESSION_PATH}`, {
+  const response = await fetchWithNetworkRetry(`${sessionOrigin()}${SESSION_ADMISSION_PATH}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      "User-Agent": PLAIN_UA,
-      "x-freebuff-model": model,
+      ...sessionHeaders(token, { [HEADER_MODEL]: model }),
     },
+    body: JSON.stringify({}),
   }, proxyOptions);
 
   let data = {};
   try { data = await response.json(); } catch { data = {}; }
+
+  // Binary menandai 404/405 di endpoint admission sebagai
+  // `session_admission_unsupported` dan menyuruh update CLI — artinya server
+  // tidak (lagi) punya rute itu. Jangan jatuh ke /session: POST ke sana tidak
+  // pernah jadi jalur resmi, dan menebak hanya menutupi masalah nyata.
+  if (response.status === 404 || response.status === 405) {
+    const err = new Error(
+      `Freebuff session admission endpoint tidak tersedia (${response.status}) — server Freebuff mungkin sudah pindah ke rute lain. Coba update 9router; jangan paksa POST ke /freebuff/session karena itu bukan jalur resmi CLI.`,
+    );
+    err.status = response.status;
+    err.code = "session_admission_unsupported";
+    throw err;
+  }
 
   if (response.status === 401) {
     const err = new Error("Freebuff session auth failed (401) — re-login in the dashboard");
@@ -448,11 +527,13 @@ async function fetchSessionOffers(token, proxyOptions) {
     return cached.offers;
   }
 
+  // GET status TANPA x-freebuff-instance-id: kita hanya mengintip penawaran,
+  // belum memegang seat. Itu sebabnya header heartbeat/include-unused tidak
+  // dipasang di sini — binary memasangnya hanya saat `$.instanceId` ada.
   const response = await fetchWithNetworkRetry(`${sessionOrigin()}${SESSION_PATH}`, {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${token}`,
-      "User-Agent": PLAIN_UA,
+      ...sessionHeaders(token),
       Accept: "application/json",
     },
   }, proxyOptions);
@@ -534,6 +615,13 @@ async function ensureSession(token, model, proxyOptions, force = false) {
 }
 
 // Register an agent run so the chat backend can resolve the run_id we send.
+//
+// DUAL-AUTH: binary mengirim `Authorization: Bearer` DAN `x-codebuff-api-key`
+// (token yang sama) di setiap panggilan /agent-runs:
+//   headers: this.token ? { 'x-codebuff-api-key': this.token } : {}
+// Token-nya identik, jadi ini bukan kredensial kedua — server memakai header
+// itu untuk mengaitkan run dengan akun. Tanpa itu run bisa tidak terlihat
+// sebagai milik akun kita.
 async function startRun(token, model, proxyOptions) {
   const response = await fetchWithNetworkRetry(`${sessionOrigin()}${RUN_PATH}`, {
     method: "POST",
@@ -541,6 +629,7 @@ async function startRun(token, model, proxyOptions) {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
       "User-Agent": PLAIN_UA,
+      [HEADER_API_KEY]: token,
     },
     body: JSON.stringify({
       action: "START",
@@ -569,6 +658,43 @@ async function startRun(token, model, proxyOptions) {
   return data.runId;
 }
 
+// Ambil id akun sendiri dari GET /api/v1/me?fields=id,email — probe token yang
+// dipakai CLI setelah login, dan sumber `x-freebuff-acting-user-id`.
+//
+// Hanya dipanggil sebagai CADANGAN saat kredensial belum menyimpan userId
+// (akun lama yang tersambung sebelum field itu ikut disimpan). Hasilnya
+// di-cache per token supaya tidak memanggil endpoint ini di setiap request.
+// Gagal = null (bukan throw): identitas adalah pelengkap, bukan syarat.
+async function fetchActingUserId(token, proxyOptions) {
+  const cached = userIdCache.get(token);
+  if (cached !== undefined) return cached;
+
+  try {
+    const response = await fetchWithNetworkRetry(
+      `${sessionOrigin()}${ME_PATH}?fields=id,email`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}`, "User-Agent": PLAIN_UA, Accept: "application/json" },
+      },
+      proxyOptions,
+    );
+    if (!response.ok) {
+      // Server menjawab tegas (401/403/404) — tidak ada id untuk token ini.
+      // Simpan hasil negatifnya supaya endpoint ini tidak dipanggil ulang di
+      // setiap request: header ini pelengkap, bukan syarat.
+      userIdCache.set(token, null);
+      return null;
+    }
+    const data = await response.json().catch(() => null);
+    const id = data?.id ? String(data.id) : null;
+    userIdCache.set(token, id);
+    return id;
+  } catch {
+    // Gangguan jaringan: JANGAN simpan — percobaan berikutnya boleh mencoba lagi.
+    return null;
+  }
+}
+
 // Best-effort run completion — mirrors the CLI's finishAgentRun. Never throws.
 async function finishRun(token, runId, status, proxyOptions) {
   if (!runId) return;
@@ -579,6 +705,7 @@ async function finishRun(token, runId, status, proxyOptions) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
         "User-Agent": PLAIN_UA,
+        [HEADER_API_KEY]: token, // dual-auth, sama seperti startRun
       },
       body: JSON.stringify({ action: "FINISH", runId, status }),
       signal: AbortSignal.timeout(10_000),
@@ -592,6 +719,7 @@ export function resetSessionCache() {
   sessionCache.clear();
   inflight.clear();
   offerCache.clear();
+  userIdCache.clear();
 }
 
 // Snapshot sizes of in-memory freebuff state (for the dashboard memory panel).
@@ -602,6 +730,7 @@ export function sessionStateSize() {
     modelLocks: modelLockCooldowns.size,
     poolLimits: poolLimitCooldowns.size,
     offerCaches: offerCache.size,
+    userIds: userIdCache.size,
   };
 }
 
@@ -672,8 +801,28 @@ export class FreebuffExecutor extends BaseExecutor {
         credentials?.providerSpecificData?.fingerprintId ||
         `9router-${crypto.randomUUID()}`,
       cost_mode: "free",
+      // Setiap request chat adalah SATU langkah agen; binary menomori langkah
+      // per loop (`llm_step_number: String(CH)` dengan CH di-increment sebelum
+      // panggilan). Request kita = satu panggilan, jadi selalu "1".
+      llm_step_number: "1",
     };
-    body.provider = { allow_fallbacks: false };
+    // `allow_fallbacks` BUKAN konstanta — binary menghitungnya per model:
+    //   F = { order: CV$[model], allow_fallbacks: !lm(model) }
+    //   lm(m) { return cmA.has(m) }        // cmA = Set dari peta model lama (h1)
+    // Model freebuff yang kita pakai TIDAK ada di himpunan itu, jadi nilainya
+    // `true` untuk semua model di FREE_ROOT_AGENT_BY_MODEL.
+    //
+    // `data_collection: "deny"` datang dari agent-nya sendiri: SETIAP agent
+    // free di binary mendeklarasikan providerOptions itu (mis. base3-free-mimo
+    // → { data_collection: "deny" }), dan CLI menyebarkannya ke request.
+    // Fable memakai daftar lebih sempit: { only: ["anthropic"],
+    // data_collection: "deny" }. Lapisan provider inilah yang membawa
+    // preferensi itu ke upstream.
+    body.provider = {
+      allow_fallbacks: true,
+      data_collection: "deny",
+      ...(model === FABLE_MODEL ? { only: ["anthropic"] } : {}),
+    };
     // Freebuff agents (base3-free-*) own reasoning: the backend applies the
     // agent's reasoningOptions.effort server-side, so a client-sent
     // reasoning_effort / reasoning.effort collides with that default →
@@ -724,6 +873,17 @@ export class FreebuffExecutor extends BaseExecutor {
 
     const url = this.buildUrl();
     const headers = this.buildHeaders(credentials, stream);
+    // Identitas akun yang bertindak — dikirim CLI di SETIAP panggilan chat:
+    //   ...(this.userId ? { 'x-freebuff-acting-user-id': this.userId } : {})
+    // userId sudah tersimpan saat login (mapTokens → providerSpecificData.userId).
+    // Kalau tidak ada, header dihilangkan — sama seperti CLI (bukan diisi "").
+    // Akun lama mungkin belum menyimpan userId — ambil sekali dari
+    // /api/v1/me (di-cache), sama seperti CLI yang memakai endpoint itu
+    // sebagai probe token. Kalau tetap tidak ada, header dihilangkan.
+    const actingUserId =
+      credentials?.providerSpecificData?.userId ||
+      (await fetchActingUserId(token, proxyOptions));
+    if (actingUserId) headers[HEADER_ACTING_USER_ID] = String(actingUserId);
     const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
 
     // Registered run whose id the backend resolves on chat. Per-request, like

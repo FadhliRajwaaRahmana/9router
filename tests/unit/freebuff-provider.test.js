@@ -202,7 +202,17 @@ describe("freebuff executor wire shape", () => {
     // run_id is the registered runId and is attached by execute(), not here.
     expect(out.codebuff_metadata.run_id).toBeUndefined();
     expect(out.codebuff).toBeUndefined();
-    expect(out.provider.allow_fallbacks).toBe(false);
+    // Setiap request = satu langkah agen (binary: String(CH), CH di-increment
+    // per loop). Nilainya string, bukan number.
+    expect(out.codebuff_metadata.llm_step_number).toBe("1");
+    // allow_fallbacks dihitung per model di binary (`!lm(model)`); model
+    // freebuff tidak ada di himpunan `h1` yang jadi acuan, jadi hasilnya true.
+    expect(out.provider.allow_fallbacks).toBe(true);
+    // Setiap agent free di binary mendeklarasikan data_collection:"deny" di
+    // providerOptions-nya, dan CLI menyebarkannya ke request.
+    expect(out.provider.data_collection).toBe("deny");
+    // Model non-Fable tidak membatasi daftar provider.
+    expect(out.provider.only).toBeUndefined();
     // Free-tier marker is prepended so the first message opens with the CLI root prompt.
     expect(out.messages[0].content).toBe(FREEBUFF_SYSTEM_MARKER);
   });
@@ -210,6 +220,18 @@ describe("freebuff executor wire shape", () => {
   it("buildUrl targets the Codebuff chat completions endpoint (www.codebuff.com)", () => {
     const ex = new FreebuffExecutor();
     expect(ex.buildUrl()).toBe("https://www.codebuff.com/api/v1/chat/completions");
+  });
+
+  it("pins Fable to the anthropic provider (mirrors base2-free-fable's only:['anthropic'])", () => {
+    const ex = new FreebuffExecutor();
+    const model = "anthropic/claude-fable-5.1";
+    const out = ex.transformRequest(model, { model, messages: [{ role: "user", content: "hi" }] }, true, {
+      providerSpecificData: { fingerprintId: "fp-1" },
+    });
+    // Agent fable di binary memakai providerOptions yang lebih sempit daripada
+    // agent free lain: hanya boleh lewat provider "anthropic".
+    expect(out.provider.only).toEqual(["anthropic"]);
+    expect(out.provider.data_collection).toBe("deny");
   });
 
   it("injects the end_turn tool into any tool-calling request (backend foreign_toolset gate)", () => {
@@ -251,7 +273,7 @@ describe("freebuff executor wire shape", () => {
 });
 
 describe("freebuff session pre-flight", () => {
-  it("claims a session via POST /session with x-freebuff-model and caches it per token+model", async () => {
+  it("claims a session via POST /session/admission with x-freebuff-model and caches it per token+model", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
         status: "active",
@@ -264,10 +286,15 @@ describe("freebuff session pre-flight", () => {
     expect(first).toEqual({ instanceId: "inst-1", status: "active" });
 
     const [url, opts] = fetchMock.mock.calls[0];
-    expect(url).toBe("https://www.codebuff.com/api/v1/freebuff/session");
+    // Endpoint KLAIM yang dipakai CLI resmi — bukan /freebuff/session.
+    expect(url).toBe("https://www.codebuff.com/api/v1/freebuff/session/admission");
     expect(opts.method).toBe("POST");
     expect(opts.headers["x-freebuff-model"]).toBe("deepseek/deepseek-v4-flash");
     expect(opts.headers.Authorization).toBe("Bearer tok-1");
+    // Header "jujur" yang CLI pasang di setiap panggilan sesi.
+    expect(opts.headers["x-freebuff-wallet-spend-limit"]).toBe("0");
+    expect(opts.headers["x-freebuff-first-tab-discount"]).toBe("0");
+    expect(opts.headers["x-fb-timezone"]).toBeTruthy();
 
     // Second call for the same token+model hits the cache — no new claim.
     await ensureSession("tok-1", "deepseek/deepseek-v4-flash", null);
@@ -285,6 +312,17 @@ describe("freebuff session pre-flight", () => {
     fetchMock.mockResolvedValue(jsonResponse({ status: "none", accessTier: "full" }));
     const res = await ensureSession("tok-1", "deepseek/deepseek-v4-flash", null);
     expect(res).toEqual({ instanceId: null, status: "none" });
+  });
+
+  it("marks 404/405 from the admission route as session_admission_unsupported", async () => {
+    // Binary menandai rute admission yang hilang dengan kode ini dan menyuruh
+    // update — bukan diam-diam jatuh ke POST /freebuff/session, yang bukan
+    // jalur resmi CLI.
+    fetchMock.mockResolvedValue(jsonResponse({ error: "not found" }, { status: 404, ok: false }));
+    await expect(ensureSession("tok-1", "deepseek/deepseek-v4-flash", null)).rejects.toMatchObject({
+      code: "session_admission_unsupported",
+      status: 404,
+    });
   });
 
   it("throws a friendly error on rate_limited", async () => {
@@ -401,7 +439,7 @@ describe("freebuff session pre-flight", () => {
 });
 
 describe("freebuff limited-offer (Claude Fable 5) claims", () => {
-  const FABLE = "anthropic/claude-fable-5";
+  const FABLE = "anthropic/claude-fable-5.1";
   const offerRow = (over = {}) => ({
     model: FABLE,
     remaining: 3,
@@ -421,6 +459,14 @@ describe("freebuff limited-offer (Claude Fable 5) claims", () => {
     expect(opts.method).toBe("GET");
     expect(opts.headers.Authorization).toBe("Bearer tok-1");
     expect(opts.headers.Accept).toBe("application/json");
+    // Header sesi "jujur" dipasang di SEMUA panggilan /freebuff/session,
+    // termasuk GET status ini.
+    expect(opts.headers["x-freebuff-wallet-spend-limit"]).toBe("0");
+    expect(opts.headers["x-freebuff-first-tab-discount"]).toBe("0");
+    // GET ini belum memegang seat, jadi header heartbeat TIDAK dipasang —
+    // binary hanya memasangnya saat instanceId sudah ada.
+    expect(opts.headers["x-freebuff-heartbeat"]).toBeUndefined();
+    expect(opts.headers["x-freebuff-instance-id"]).toBeUndefined();
 
     // Second read within the cache TTL does not refetch.
     await fetchSessionOffers("tok-1", null);
@@ -525,7 +571,7 @@ describe("freebuff run registration", () => {
     expect(rootAgentIdForModel("meta/muse-spark-1.2-contributor")).toBe("base3-free-muse-spark");
     // Fable HANYA ada di peta base2 binary resmi (`base2-free-fable`); ia tidak
     // pernah masuk peta base3. Memetakannya ke base3 = 404 "No endpoints found".
-    expect(rootAgentIdForModel("anthropic/claude-fable-5")).toBe("base2-free-fable");
+    expect(rootAgentIdForModel("anthropic/claude-fable-5.1")).toBe("base2-free-fable");
 
     // Withdrawn upstream models are unmapped — they fall back.
     //
@@ -577,6 +623,9 @@ describe("freebuff run registration", () => {
     expect(url).toBe("https://www.codebuff.com/api/v1/agent-runs");
     expect(opts.method).toBe("POST");
     expect(opts.headers.Authorization).toBe("Bearer tok-1");
+    // DUAL-AUTH: CLI mengirim token yang sama lewat Authorization DAN
+    // x-codebuff-api-key di setiap panggilan /agent-runs.
+    expect(opts.headers["x-codebuff-api-key"]).toBe("tok-1");
     const payload = JSON.parse(opts.body);
     expect(payload.action).toBe("START");
     expect(payload.agentId).toBe("base3-free-deepseek-flash");
@@ -604,15 +653,23 @@ describe("freebuff run registration", () => {
 
 describe("freebuff executor execute", () => {
   const CHAT_URL = "https://www.codebuff.com/api/v1/chat/completions";
+  // POST klaim memakai endpoint admission; GET status/offers tetap /session.
   const SESSION_URL = "https://www.codebuff.com/api/v1/freebuff/session";
+  const ADMISSION_URL = "https://www.codebuff.com/api/v1/freebuff/session/admission";
   const RUN_URL = "https://www.codebuff.com/api/v1/agent-runs";
   const MODEL = "deepseek/deepseek-v4-flash";
-  const credentials = { accessToken: "tok-1", providerSpecificData: { fingerprintId: "fp-1" } };
+  // Bentuk kredensial yang NYATA: mapTokens menyimpan id akun saat login
+  // (providerSpecificData.userId), jadi jalur normal tidak perlu memanggil
+  // /api/v1/me sama sekali.
+  const credentials = {
+    accessToken: "tok-1",
+    providerSpecificData: { fingerprintId: "fp-1", userId: "user-1" },
+  };
 
   // Default happy-path backend: session active, run registered, chat 200.
   const happyPath = () => {
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) {
+      if (url === ADMISSION_URL) {
         return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       }
       if (url === RUN_URL) {
@@ -643,12 +700,83 @@ describe("freebuff executor execute", () => {
     expect(sent.codebuff).toBeUndefined();
     // Free-tier marker present at position 0 of the request body.
     expect(sent.messages[0].content.startsWith("You are Buffy,")).toBe(true);
+
+    // Header identitas akun di panggilan CHAT (bukan body). Kredensial di sini
+    // sudah menyimpan userId dari login, jadi tidak perlu /api/v1/me.
+    expect(chatCall[1].headers["x-freebuff-acting-user-id"]).toBe("user-1");
+    expect(chatCall[1].headers["User-Agent"]).toBe("ai-sdk/openai-compatible/1.0.0/codebuff");
+    // Jalur normal tidak boleh memanggil /api/v1/me sama sekali.
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/v1/me"))).toBe(false);
+
+    // run FINISH juga dual-auth.
+    const finishCall = fetchMock.mock.calls.find(
+      ([u, o]) => u === RUN_URL && JSON.parse(o.body).action === "FINISH",
+    );
+    expect(finishCall[1].headers["x-codebuff-api-key"]).toBe("tok-1");
+  });
+
+  it("falls back to GET /api/v1/me once when the credential has no userId", async () => {
+    let meHits = 0;
+    fetchMock.mockImplementation(async (url) => {
+      if (url === ADMISSION_URL) {
+        return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      }
+      if (String(url).includes("/api/v1/me")) {
+        meHits += 1;
+        return jsonResponse({ id: "user-from-me", email: "a@b.c" });
+      }
+      if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
+      return jsonResponse({ choices: [{ message: { content: "hi" } }] });
+    });
+
+    // Kredensial akun lama: fingerprintId ada, userId BELUM tersimpan.
+    const legacyCreds = { accessToken: "tok-1", providerSpecificData: { fingerprintId: "fp-1" } };
+    const ex = new FreebuffExecutor();
+    const body = { model: MODEL, messages: [{ role: "user", content: "hi" }] };
+    await ex.execute({ model: MODEL, body, stream: false, credentials: legacyCreds, log: null });
+
+    expect(meHits).toBe(1);
+    const chatCall = fetchMock.mock.calls.find(([u]) => u === CHAT_URL);
+    expect(chatCall[1].headers["x-freebuff-acting-user-id"]).toBe("user-from-me");
+
+    // Percobaan kedua: hasil sudah di-cache, /api/v1/me tidak dipanggil lagi.
+    await ex.execute({ model: MODEL, body, stream: false, credentials: legacyCreds, log: null });
+    expect(meHits).toBe(1);
+  });
+
+  it("does not call /api/v1/me again after it answers without an id", async () => {
+    let meHits = 0;
+    fetchMock.mockImplementation(async (url) => {
+      if (url === ADMISSION_URL) {
+        return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      }
+      if (String(url).includes("/api/v1/me")) {
+        meHits += 1;
+        return jsonResponse({ error: "nope" }, { status: 403, ok: false });
+      }
+      if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
+      return jsonResponse({ choices: [{ message: { content: "hi" } }] });
+    });
+
+    const legacyCreds = { accessToken: "tok-1", providerSpecificData: { fingerprintId: "fp-1" } };
+    const ex = new FreebuffExecutor();
+    const body = { model: MODEL, messages: [{ role: "user", content: "hi" }] };
+    await ex.execute({ model: MODEL, body, stream: false, credentials: legacyCreds, log: null });
+
+    // Jawaban tegas (403) di-cache sebagai "tidak ada id" — header dilewati,
+    // dan request berikutnya tidak memanggil endpoint itu lagi.
+    const chatCall = fetchMock.mock.calls.find(([u]) => u === CHAT_URL);
+    expect(chatCall[1].headers["x-freebuff-acting-user-id"]).toBeUndefined();
+    expect(meHits).toBe(1);
+
+    await ex.execute({ model: MODEL, body, stream: false, credentials: legacyCreds, log: null });
+    expect(meHits).toBe(1);
   });
 
   it("retries exactly once on 428 with a fresh session AND a fresh run", async () => {
     let chatHits = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) {
+      if (url === ADMISSION_URL) {
         return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       }
       if (url === RUN_URL) {
@@ -666,7 +794,7 @@ describe("freebuff executor execute", () => {
     expect(response.status).toBe(200);
     expect(chatHits).toBe(2);
     // Session was claimed twice (initial + forced re-claim).
-    expect(fetchMock.mock.calls.filter(([u]) => u === SESSION_URL).length).toBe(2);
+    expect(fetchMock.mock.calls.filter(([u]) => u === ADMISSION_URL).length).toBe(2);
     // Runs: START #1, FINISH(cancelled) #1 (abandoned on 428), START #2,
     // FINISH(completed) #2.
     const runCalls = fetchMock.mock.calls.filter(([u]) => u === RUN_URL);
@@ -686,7 +814,7 @@ describe("freebuff executor execute", () => {
   it("re-claims the session on 409 session_superseded and retries once", async () => {
     let chatHits = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === ADMISSION_URL) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-2" });
       chatHits += 1;
       if (chatHits === 1) {
@@ -702,7 +830,7 @@ describe("freebuff executor execute", () => {
     expect(response.status).toBe(200);
     expect(chatHits).toBe(2);
     // Session re-claimed (initial + forced) and runs restarted.
-    expect(fetchMock.mock.calls.filter(([u]) => u === SESSION_URL).length).toBe(2);
+    expect(fetchMock.mock.calls.filter(([u]) => u === ADMISSION_URL).length).toBe(2);
     const runCalls = fetchMock.mock.calls.filter(([u]) => u === RUN_URL);
     expect(runCalls.filter((c) => JSON.parse(c[1].body).action === "START").length).toBe(2);
   });
@@ -710,7 +838,7 @@ describe("freebuff executor execute", () => {
   it("re-claims the session on 410 session_expired and retries once", async () => {
     let chatHits = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === ADMISSION_URL) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-2" });
       chatHits += 1;
       if (chatHits === 1) return jsonResponse({ error: "session_expired" }, { status: 410, ok: false });
@@ -726,7 +854,7 @@ describe("freebuff executor execute", () => {
 
   it("throws a 401 re-login error when the chat endpoint rejects the token", async () => {
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === ADMISSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
       return jsonResponse({ error: "unauthorized" }, { status: 401, ok: false });
     });
@@ -749,7 +877,7 @@ describe("freebuff executor execute", () => {
     // 400 (not in the 429/502/503 retry set) so the test stays fast and mirrors
     // the real upstream rejection.
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === ADMISSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
       return jsonResponse({ error: "upstream boom" }, { status: 400, ok: false });
     });
@@ -769,7 +897,7 @@ describe("freebuff executor execute", () => {
   it("finishes the run as failed when execute throws mid-flight", async () => {
     // AbortError (caller/stream abort) is never retried, keeping this test fast.
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === ADMISSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
       throw Object.assign(new Error("aborted"), { name: "AbortError" });
     });
@@ -790,7 +918,7 @@ describe("freebuff executor execute", () => {
   it("retries the chat POST on a transient fetch-level network error", async () => {
     let chatHits = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === ADMISSION_URL) return jsonResponse({ status: "active", instanceId: "inst-1", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) return jsonResponse({ runId: "run-1" });
       chatHits += 1;
       if (chatHits === 1) throw new Error("fetch failed (cause: ECONNRESET)");
@@ -813,7 +941,7 @@ describe("freebuff executor execute", () => {
     let chatHits = 0;
     let runStartCount = 0;
     fetchMock.mockImplementation(async (url) => {
-      if (url === SESSION_URL) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      if (url === ADMISSION_URL) return jsonResponse({ status: "active", instanceId: "inst-2", expiresAt: new Date(Date.now() + 3600000).toISOString() });
       if (url === RUN_URL) {
         // First START succeeds (run-1). Every later call fails with the
         // transient ECONNRESET: the fire-and-forget FINISH swallows it, and
