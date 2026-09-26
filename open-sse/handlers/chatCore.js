@@ -320,7 +320,15 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (passthrough && clientTool === "claude") anchorClaudeCache(translatedBody);
 
   const executor = getExecutor(provider);
-  trackPendingRequest(model, provider, connectionId, true);
+  // Live panel seed: startedAt for elapsed time + prompt-size estimate for the
+  // input column. The real upstream usage replaces both once chunks arrive
+  // (reportPendingProgress) — the estimate only fills the pre-TTFT gap.
+  let estimatedInputTokens = 0;
+  try {
+    const bodyStr = JSON.stringify(translatedBody || body || {});
+    estimatedInputTokens = Math.max(1, Math.ceil(bodyStr.length / 4));
+  } catch { /* fail-open: estimate stays 0, panel reads "—" */ }
+  trackPendingRequest(model, provider, connectionId, true, false, { startedAt: Date.now(), estimatedInputTokens });
   appendRequestLog({ model, provider, connectionId, status: "PENDING" }).catch(() => { });
 
   const msgCount = translatedBody.messages?.length || translatedBody.input?.length || translatedBody.contents?.length || translatedBody.request?.contents?.length || 0;

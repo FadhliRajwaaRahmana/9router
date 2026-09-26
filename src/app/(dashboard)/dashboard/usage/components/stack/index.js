@@ -55,6 +55,14 @@ export default function UsageStackConnected({ period }) {
   /** Periode yang datanya sedang dipegang `stats`. `null` = belum ada apa pun. */
   const [statsPeriod, setStatsPeriod] = useState(null);
   /**
+   * Data live (tidak terikat periode): request berjalan + terakhir.
+   * Dipisah dari `stats` supaya panel Live tidak ikut hilang saat ganti
+   * periode — `stats` sengaja di-null-kan selama `statsPeriod !== period`
+   * (angka periode lain tidak boleh tampil), tapi live justru harus tetap
+   * jalan karena ia bukan angka periode mana pun.
+   */
+  const [live, setLive] = useState({ activeRequests: [], recentRequests: [] });
+  /**
    * Periode yang gagal dimuat — DISIMPAN BERSAMA PERIODENYA, bukan sebagai
    * boolean lepas.
    *
@@ -120,6 +128,12 @@ export default function UsageStackConnected({ period }) {
           if (periodRef.current === requestedPeriod) setFailure(requestedPeriod);
           return;
         }
+        if (data.activeRequests !== undefined || data.recentRequests !== undefined) {
+          setLive((prev) => ({
+            activeRequests: data.activeRequests ?? prev.activeRequests,
+            recentRequests: data.recentRequests ?? prev.recentRequests,
+          }));
+        }
         setStats((prev) => ({
           ...prev,
           ...data,
@@ -166,6 +180,15 @@ export default function UsageStackConnected({ period }) {
       // yang telat bicara bisa menggantikan data periode yang sedang dilihat.
       const current = periodRef.current;
       const isFullStats = data.totalRequests !== undefined && data.period === current;
+
+      // Live selalu diperbarui dari payload apa pun yang membawa field-nya —
+      // ia tidak terikat periode, jadi tidak ikut aturan period-match di bawah.
+      if (data.activeRequests !== undefined || data.recentRequests !== undefined) {
+        setLive((prev) => ({
+          activeRequests: data.activeRequests ?? prev.activeRequests,
+          recentRequests: data.recentRequests ?? prev.recentRequests,
+        }));
+      }
 
       setStats((prev) => {
         if (!prev) return data;
@@ -226,6 +249,9 @@ export default function UsageStackConnected({ period }) {
       // kerangka selama `loading`, dan menjadi keadaan gagal saat tidak —
       // sehingga tidak ada jalan bagi angka periode lain untuk tampil.
       stats={periodMatches ? stats : null}
+      // Live diteruskan terpisah dari `stats`: ia bukan angka periode mana pun,
+      // jadi panel Live tetap jalan selama kerangka periode ditampilkan.
+      live={live}
       loading={loading}
       // Tidak ada lagi permintaan berjalan begitu angka periode ini tiba: REST
       // yang datang belakangan tidak dihitung, karena yang tampil sudah final

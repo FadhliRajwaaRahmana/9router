@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Card from "@/shared/components/Card";
 import StackHead from "./StackHead";
+import LivePanel from "./LivePanel";
 import Layer, { LayerRow } from "./Layer";
 import FilterBar from "./FilterBar";
 import FlowChart from "./FlowChart";
@@ -76,7 +77,7 @@ function providerLabel(id, nodeNames) {
   return `${id.slice(0, 14)}…`;
 }
 
-export default function UsageStack({ period, stats, loading, onRetry, nodeNames = {} }) {
+export default function UsageStack({ period, stats, live = null, loading, onRetry, nodeNames = {} }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -210,11 +211,23 @@ export default function UsageStack({ period, stats, loading, onRetry, nodeNames 
     [searching, openLayers, layers],
   );
 
+  // Live tidak terikat periode: saat ganti periode `stats` sengaja null
+  // (angka periode lain tidak boleh tampil), tapi panel Live harus tetap
+  // jalan — datanya berasal dari state `live` yang diperbarui REST/SSE
+  // terpisah dari angka periode.
+  const liveStats = {
+    activeRequests: live?.activeRequests ?? stats?.activeRequests ?? [],
+    recentRequests: live?.recentRequests ?? stats?.recentRequests ?? [],
+  };
+
   if (!stats && loading) {
     return (
-      <div className="flex min-w-0 flex-col gap-5">
-        <div className="h-24 animate-pulse rounded-[14px] bg-border-subtle" />
-        <div className="h-40 animate-pulse rounded-[14px] bg-border-subtle" />
+      <div className="flex min-w-0 flex-col gap-6">
+        <LivePanel stats={liveStats} nodeNames={nodeNames} />
+        <div className="flex min-w-0 flex-col gap-5">
+          <div className="h-24 animate-pulse rounded-[14px] bg-border-subtle" />
+          <div className="h-40 animate-pulse rounded-[14px] bg-border-subtle" />
+        </div>
       </div>
     );
   }
@@ -293,6 +306,12 @@ export default function UsageStack({ period, stats, loading, onRetry, nodeNames 
         selectedProvider={providerFilter}
         nodeNames={nodeNames}
       />
+
+      {/* Live — request berjalan (model/provider/token/elapsed) + terakhir
+          (model/waktu relatif). Datanya menumpang SSE yang sudah ada.
+          `liveStats` mengutamakan state live (selalu segar via SSE) dan hanya
+          jatuh ke angka periode saat state live belum terisi. */}
+      <LivePanel stats={liveStats} nodeNames={nodeNames} />
 
       {/* Chart — satu seri, dengan brush dan ringkasan rentang terpilih. */}
       <FlowChart period={period} mode={mode} />

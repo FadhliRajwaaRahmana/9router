@@ -16,6 +16,14 @@ const PERIOD_MS = { "24h": 86400000, "7d": 604800000, "30d": 2592000000, "60d": 
 
 // In-memory state shared across Next.js modules
 if (!global._pendingRequests) global._pendingRequests = { byModel: {}, byAccount: {} };
+// Per-instance metadata parallel to _pendingRequests (same keys): startedAt +
+// live token estimates. Counts alone can't answer "running how long" or "how
+// many tokens so far", so they live here — pushed on start, shifted on finish,
+// cleared together with the count on timeout.
+if (!global._pendingMeta) global._pendingMeta = { byAccount: {} };
+// Last SSE-push timestamps per pending key, so per-chunk progress updates from
+// the stream don't fan out to every dashboard client on every token.
+if (!global._pendingProgressEmit) global._pendingProgressEmit = {};
 if (!global._lastErrorProvider) global._lastErrorProvider = { provider: "", ts: 0 };
 if (!global._statsEmitter) {
   global._statsEmitter = new EventEmitter();
@@ -27,6 +35,8 @@ if (!global._connectionMapCache) global._connectionMapCache = { map: {}, ts: 0 }
 if (!global._statsEmitTimers) global._statsEmitTimers = { pending: null, update: null };
 
 const pendingRequests = global._pendingRequests;
+const pendingMeta = global._pendingMeta;
+const pendingProgressEmit = global._pendingProgressEmit;
 const lastErrorProvider = global._lastErrorProvider;
 const pendingTimers = global._pendingTimers;
 const recentRing = global._recentRing;
@@ -149,7 +159,32 @@ async function calculateCost(provider, model, tokens) {
   }
 }
 
-export function trackPendingRequest(model, provider, connectionId, started, error = false) {
+// Arms (or re-arms) the stuck-request timeout for one pending key. Extracted so
+// both the start path and the per-chunk progress path share one watchdog: a
+// stream that keeps emitting chunks must not be reaped mid-request.
+function armPendingTimeout(connectionId, modelKey, timerKey) {
+  clearTimeout(pendingTimers[timerKey]);
+  pendingTimers[timerKey] = setTimeout(() => {
+    delete pendingTimers[timerKey];
+    if (pendingRequests.byModel[modelKey] > 0) pendingRequests.byModel[modelKey] = 0;
+    if (connectionId && pendingRequests.byAccount[connectionId]?.[modelKey] > 0) {
+      pendingRequests.byAccount[connectionId][modelKey] = 0;
+    }
+    // The timeout drops the count — the metadata must go with it, otherwise a
+    // stuck entry would read as "running" forever in the live panel.
+    if (connectionId && pendingMeta.byAccount[connectionId]?.[modelKey]) {
+      delete pendingMeta.byAccount[connectionId][modelKey];
+      if (Object.keys(pendingMeta.byAccount[connectionId]).length === 0) {
+        delete pendingMeta.byAccount[connectionId];
+      }
+    }
+    delete pendingProgressEmit[timerKey];
+    scheduleStatsEvent("pending");
+  }, PENDING_TIMEOUT_MS);
+  pendingTimers[timerKey]?.unref?.();
+}
+
+export function trackPendingRequest(model, provider, connectionId, started, error = false, details = null) {
   const modelKey = provider ? `${model} (${provider})` : model;
   const timerKey = `${connectionId}|${modelKey}`;
 
@@ -169,16 +204,37 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
     }
   }
 
-  if (started) {
-    clearTimeout(pendingTimers[timerKey]);
-    pendingTimers[timerKey] = setTimeout(() => {
-      delete pendingTimers[timerKey];
-      if (pendingRequests.byModel[modelKey] > 0) pendingRequests.byModel[modelKey] = 0;
-      if (connectionId && pendingRequests.byAccount[connectionId]?.[modelKey] > 0) {
-        pendingRequests.byAccount[connectionId][modelKey] = 0;
+  // Per-instance metadata (startedAt + token estimates), keyed like the counts.
+  // Shifted FIFO on finish so each live row in the dashboard maps to one real
+  // request instance instead of an aggregated counter.
+  if (connectionId) {
+    if (started) {
+      const byConn = (pendingMeta.byAccount[connectionId] ||= {});
+      const list = (byConn[modelKey] ||= []);
+      list.push({
+        startedAt: Number(details?.startedAt) > 0 ? Number(details.startedAt) : Date.now(),
+        estimatedInput: Math.max(0, Number(details?.estimatedInputTokens) || 0),
+        inputTokens: 0, // replaced by real upstream usage once chunks arrive
+        outputTokens: 0,
+        outputReal: false, // true once upstream reported real completion tokens
+        updatedAt: Date.now(),
+      });
+      if (list.length > 20) list.splice(0, list.length - 20);
+    } else {
+      const list = pendingMeta.byAccount[connectionId]?.[modelKey];
+      if (list?.length) list.shift();
+      if (list && list.length === 0) {
+        delete pendingMeta.byAccount[connectionId][modelKey];
+        if (Object.keys(pendingMeta.byAccount[connectionId]).length === 0) {
+          delete pendingMeta.byAccount[connectionId];
+        }
       }
-      scheduleStatsEvent("pending");
-    }, PENDING_TIMEOUT_MS);
+      delete pendingProgressEmit[timerKey];
+    }
+  }
+
+  if (started) {
+    armPendingTimeout(connectionId, modelKey, timerKey);
   } else {
     clearTimeout(pendingTimers[timerKey]);
     delete pendingTimers[timerKey];
@@ -193,23 +249,83 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
   scheduleStatsEvent("pending");
 }
 
-export async function getActiveRequests() {
-  const activeRequests = [];
-  const connectionMap = await getConnectionMapCached();
+// Live token progress for one running request, called per stream chunk.
+// Updates the newest instance's output estimate; fans out to dashboard clients
+// at most once per second — the panel ticks elapsed time locally from
+// startedAt, so per-token pushes would only multiply SSE traffic.
+const PROGRESS_EMIT_THROTTLE_MS = 1000;
 
+export function reportPendingProgress(model, provider, connectionId, progress = {}) {
+  if (!connectionId) return;
+  const modelKey = provider ? `${model} (${provider})` : model;
+  const list = pendingMeta.byAccount[connectionId]?.[modelKey];
+  if (!list?.length) return;
+  const last = list[list.length - 1];
+  const u = progress?.usage || {};
+  const realIn = Number(u.prompt_tokens ?? u.input_tokens ?? 0);
+  const realOut = Number(u.completion_tokens ?? u.output_tokens ?? 0);
+  if (realIn > 0) last.inputTokens = realIn;
+  if (realOut > 0) {
+    // Real upstream counts always beat the char-based estimate, even downward.
+    last.outputTokens = realOut;
+    last.outputReal = true;
+  } else if (!last.outputReal) {
+    const est = Math.ceil(Math.max(0, Number(progress?.outputChars) || 0) / 4);
+    if (est > (last.outputTokens || 0)) last.outputTokens = est;
+  }
+  last.updatedAt = Date.now();
+
+  const timerKey = `${connectionId}|${modelKey}`;
+  const now = Date.now();
+  // Re-arm the stuck-request watchdog: a stream that keeps emitting chunks is
+  // alive by definition and must not be reaped mid-request. Done before the
+  // emit throttle so even throttled (non-emitted) chunks keep it alive.
+  try { armPendingTimeout(connectionId, modelKey, timerKey); } catch {}
+  if (now - (pendingProgressEmit[timerKey] || 0) < PROGRESS_EMIT_THROTTLE_MS) return;
+  pendingProgressEmit[timerKey] = now;
+  scheduleStatsEvent("pending");
+}
+
+// One live row per running request instance (model/provider/account/startedAt +
+// token progress). Shared by getActiveRequests and getUsageStats so both answer
+// the same thing. Instances without metadata (started before metadata existed)
+// fall back to one aggregate row with no fake timestamps.
+function buildActiveRequestRows(connectionMap) {
+  const rows = [];
+  const now = Date.now();
   for (const [connectionId, models] of Object.entries(pendingRequests.byAccount)) {
     for (const [modelKey, count] of Object.entries(models)) {
-      if (count > 0) {
-        const accountName = connectionMap[connectionId] || `Account ${connectionId.slice(0, 8)}...`;
-        const match = modelKey.match(/^(.*) \((.*)\)$/);
-        activeRequests.push({
-          model: match ? match[1] : modelKey,
-          provider: match ? match[2] : "unknown",
-          account: accountName, count,
+      if (!(count > 0)) continue;
+      const accountName = connectionMap[connectionId] || `Account ${connectionId.slice(0, 8)}...`;
+      const match = modelKey.match(/^(.*) \((.*)\)$/);
+      const model = match ? match[1] : modelKey;
+      const provider = match ? match[2] : "unknown";
+      const instances = pendingMeta.byAccount[connectionId]?.[modelKey] || [];
+      for (const inst of instances.slice(0, count)) {
+        rows.push({
+          model, provider, account: accountName, count: 1,
+          startedAt: new Date(inst.startedAt).toISOString(),
+          elapsedMs: Math.max(0, now - inst.startedAt),
+          inputTokens: inst.inputTokens > 0 ? inst.inputTokens : (inst.estimatedInput || 0),
+          inputEstimated: !(inst.inputTokens > 0),
+          outputTokens: inst.outputTokens || 0,
+        });
+      }
+      if (instances.length < count) {
+        rows.push({
+          model, provider, account: accountName, count: count - instances.length,
+          startedAt: null, elapsedMs: null,
+          inputTokens: 0, inputEstimated: true, outputTokens: 0,
         });
       }
     }
   }
+  return rows;
+}
+
+export async function getActiveRequests() {
+  const connectionMap = await getConnectionMapCached();
+  const activeRequests = buildActiveRequestRows(connectionMap);
 
   await ensureRingInitialized();
   const seen = new Set();
@@ -217,10 +333,15 @@ export async function getActiveRequests() {
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
     .map((e) => {
       const t = e.tokens || {};
+      const promptTokens = t.prompt_tokens || t.input_tokens || 0;
+      const completionTokens = t.completion_tokens || t.output_tokens || 0;
       return {
         timestamp: e.timestamp, model: e.model, provider: e.provider || "",
-        promptTokens: t.prompt_tokens || t.input_tokens || 0,
-        completionTokens: t.completion_tokens || t.output_tokens || 0,
+        account: e.connectionId ? (connectionMap[e.connectionId] || `Account ${String(e.connectionId).slice(0, 8)}...`) : "",
+        promptTokens,
+        completionTokens,
+        cachedTokens: t.cached_tokens || t.cache_read_input_tokens || 0,
+        totalTokens: promptTokens + completionTokens,
         status: e.status || "ok",
       };
     })
@@ -369,16 +490,20 @@ export async function getUsageStats(period = "all") {
   for (const k of allApiKeys) apiKeyMap[k.key] = { name: k.name, id: k.id, createdAt: k.createdAt };
 
   // recentRequests from live history (last 100 entries enough for 20 deduped)
-  const recentRows = db.all(`SELECT timestamp, provider, model, tokens, status FROM usageHistory ORDER BY id DESC LIMIT 100`);
+  const recentRows = db.all(`SELECT timestamp, provider, model, connectionId, tokens, status FROM usageHistory ORDER BY id DESC LIMIT 100`);
   const seen = new Set();
   const recentRequests = recentRows
     .map((r) => {
       const t = parseJson(r.tokens, {}) || {};
+      const promptTokens = t.prompt_tokens || t.input_tokens || 0;
+      const completionTokens = t.completion_tokens || t.output_tokens || 0;
       return {
         timestamp: r.timestamp, model: r.model, provider: r.provider || "",
-        promptTokens: t.prompt_tokens || t.input_tokens || 0,
-        completionTokens: t.completion_tokens || t.output_tokens || 0,
+        account: r.connectionId ? (connectionMap[r.connectionId] || `Account ${String(r.connectionId).slice(0, 8)}...`) : "",
+        promptTokens,
+        completionTokens,
         cachedTokens: t.cached_tokens || t.cache_read_input_tokens || 0,
+        totalTokens: promptTokens + completionTokens,
         status: r.status || "ok",
       };
     })
@@ -403,20 +528,9 @@ export async function getUsageStats(period = "all") {
     errorProvider: (Date.now() - lastErrorProvider.ts < 10000) ? lastErrorProvider.provider : "",
   };
 
-  // Active requests
-  for (const [connectionId, models] of Object.entries(pendingRequests.byAccount)) {
-    for (const [modelKey, count] of Object.entries(models)) {
-      if (count > 0) {
-        const accountName = connectionMap[connectionId] || `Account ${connectionId.slice(0, 8)}...`;
-        const match = modelKey.match(/^(.*) \((.*)\)$/);
-        stats.activeRequests.push({
-          model: match ? match[1] : modelKey,
-          provider: match ? match[2] : "unknown",
-          account: accountName, count,
-        });
-      }
-    }
-  }
+  // Active requests — same per-instance rows as getActiveRequests() so the
+  // stack header and the /api/usage/stream payload never disagree.
+  stats.activeRequests = buildActiveRequestRows(connectionMap);
 
   // last10Minutes — query 10min window
   const now = new Date();
