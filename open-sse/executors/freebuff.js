@@ -127,17 +127,28 @@ function injectEndTurnTool(body) {
   return { ...body, tools: [...tools, END_TURN_TOOL] };
 }
 
-// Freebuff root agent id per model (mirrors the CLI's
-// FREEBUFF_CLI_BASE3_AGENT_ID_BY_MODEL — the CLI harness moved from base2 to
-// base3, and the backend can return 404 "No endpoints found" for the old
-// base2 roots during the transition).
+// Freebuff root agent id per model — diambil LANGSUNG dari binary CLI resmi
+// `freebuff` v0.0.199 (fungsi pemilih `rw$` → `n6A` → `PKH`/`l6A`).
 //
-// Withdrawn upstream models (deepseek-v4-pro, minimax-m3, stealth/ox-alpha,
-// google/gemini-3.8-flash, meta/muse-spark-1.3-contributor) are deliberately
-// absent: no new session can be admitted on them, so mapping them would only
-// hide a dead pick behind a wrong root. z-ai/glm-5.2 stays mapped
-// (referral-earned accounts can still run it) even though it is not a
-// standing picker row.
+// Peta di binary itu ADA DUA, dan urutan pemakaiannya begini:
+//
+//   rw$(model) { return Kt === "base3" ? n6A(model) : FKH(model) }
+//   n6A(model) { return PKH[model] ?? FKH(model) }   // peta base3
+//   FKH(model) { return nw$[model] ?? "base2-free" } // peta base2 + fallback
+//
+// `Kt` = "base3" (harness aktif saat ini), jadi jalur normal = PKH (base3),
+// dan FKH (base2) HANYA dipakai untuk model yang TIDAK ada di PKH.
+//
+// Konsekuensi penting: Fable TIDAK ada di PKH/l6A — ia hanya ada di peta
+// base2 sebagai `base2-free-fable`. Jadi root yang benar untuk Fable adalah
+// **base2**, bukan base3. Model di peta ini harus mengikuti peta mana yang
+// benar-benar memuatnya di binary, bukan diseragamkan ke base3.
+//
+// Model yang ditarik upstream (deepseek-v4-pro, minimax-m3, stealth/ox-alpha,
+// google/gemini-3.8-flash, meta/muse-spark-1.3-contributor) sengaja tidak
+// dipetakan: tidak ada sesi baru yang bisa diadmit di sana. z-ai/glm-5.2 tetap
+// dipetakan (akun hasil referral masih bisa menjalankannya) walau bukan baris
+// picker tetap.
 const FREE_ROOT_AGENT_BY_MODEL = {
   "deepseek/deepseek-v4-flash": "base3-free-deepseek-flash",
   "z-ai/glm-5.2": "base3-free-glm",
@@ -146,8 +157,36 @@ const FREE_ROOT_AGENT_BY_MODEL = {
   "openai/gpt-5.6-luna": "base3-free-luna",
   "upstage/solar-pro4": "base3-free-solar-pro4",
   "meta/muse-spark-1.2-contributor": "base3-free-muse-spark",
-  "anthropic/claude-fable-5": "base3-free-fable",
+  // Fable: peta base2 satu-satunya yang memuatnya (lihat catatan di atas).
+  "anthropic/claude-fable-5": "base2-free-fable",
 };
+
+// Agent id yang BENAR-BENAR terdefinisi di binary resmi. Dipakai untuk
+// memvalidasi fallback di bawah — fallback yang menunjuk agent tak dikenal
+// hanya memindahkan kegagalan dari 404 "No endpoints found" ke 404 yang sama,
+// tapi tanpa jejak bahwa kita salah menebak.
+const KNOWN_ROOT_AGENTS = new Set([
+  "base2-free",
+  "base2-free-fable",
+  "base3-free-deepseek",
+  "base3-free-deepseek-flash",
+  "base3-free-mimo",
+  "base3-free-mimo-2-6-pro",
+  "base3-free-minimax-m3",
+  "base3-free-luna",
+  "base3-free-luna-6",
+  "base3-free-glm",
+  "base3-free-glm-5-3-flash",
+  "base3-free-kimi-k3-eco",
+  "base3-free-luna-es",
+  "base3-free-muse-spark",
+  "base3-free-muse-spark-1-3",
+  "base3-free-ox-alpha",
+  "base3-free-solar-pro4",
+  "base3-free-solar-mini4",
+  "base3-free-space-bunny-alpha",
+  "base3-free-gemini-3-8-flash",
+]);
 
 // Per-token+model session cache (in-memory; keyed so multi-account setups
 // don't share one session row). Re-claims are driven by the cache expiring or
@@ -269,17 +308,26 @@ function sessionCacheKey(token, model) {
 }
 
 function rootAgentIdForModel(model) {
-  // Fallback WAJIB base3, bukan base2.
+  const mapped = FREE_ROOT_AGENT_BY_MODEL[model];
+  if (mapped) return mapped;
+
+  // Model tak dikenal: pakai "base2-free".
   //
-  // Harness CLI sudah pindah dari base2 ke base3, dan backend menolak root
-  // lama dengan 404 "No endpoints found" selama masa transisi (lihat catatan
-  // di FREE_ROOT_AGENT_BY_MODEL di atas). Fallback base2 berarti setiap model
-  // yang tidak ada di map — id baru, alias, atau salah ketik — gagal 404
-  // alih-alih memakai root yang masih hidup.
+  // Ini BUKAN tebakan — `base2-free` adalah satu-satunya fallback yang
+  // benar-benar ada di binary resmi. Rantai pemilihnya:
   //
-  // `base3-free` adalah root generik tanpa model spesifik; upstream
-  // memperlakukannya sebagai entri default yang sah.
-  return FREE_ROOT_AGENT_BY_MODEL[model] || "base3-free";
+  //   rw$(m) { return Kt === "base3" ? n6A(m) : FKH(m) }
+  //   n6A(m) { return PKH[m] ?? FKH(m) }      // peta base3
+  //   FKH(m) { return nw$[m] ?? "base2-free" } // peta base2 + fallback
+  //
+  // Saat harness base3 aktif, model yang tidak ada di PKH jatuh ke FKH, dan
+  // di sana `nw$[m]` (peta base2) masih bisa MENANGKAPNYA — jadi fallback
+  // terakhir yang pernah dijangkau adalah "base2-free".
+  //
+  // "base3-free" (tanpa suffix) TIDAK PERNAH ada di binary: ia tidak
+  // terdefinisi sebagai agent (`id:"base3-free"` nol kemunculan) dan tidak
+  // ada di daftar agent bebas `iw$`. Mengirimnya = 404 "No endpoints found".
+  return "base2-free";
 }
 
 // Retry transient network errors (ECONNRESET, TLS reset, …) on the session/
@@ -848,6 +896,8 @@ export const __test__ = {
   OFFER_GATED_MODELS,
   FREEBUFF_SYSTEM_MARKER,
   SESSION_STALE_CODES,
+  FREE_ROOT_AGENT_BY_MODEL,
+  KNOWN_ROOT_AGENTS,
 };
 
 export default FreebuffExecutor;

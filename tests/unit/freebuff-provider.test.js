@@ -19,6 +19,8 @@ const {
   fetchSessionOffers,
   guardOfferClaim,
   FREEBUFF_SYSTEM_MARKER,
+  FREE_ROOT_AGENT_BY_MODEL,
+  KNOWN_ROOT_AGENTS,
 } = __test__;
 
 const CONFIG = {
@@ -521,20 +523,30 @@ describe("freebuff run registration", () => {
     expect(rootAgentIdForModel("openai/gpt-5.6-luna")).toBe("base3-free-luna");
     expect(rootAgentIdForModel("upstage/solar-pro4")).toBe("base3-free-solar-pro4");
     expect(rootAgentIdForModel("meta/muse-spark-1.2-contributor")).toBe("base3-free-muse-spark");
-    expect(rootAgentIdForModel("anthropic/claude-fable-5")).toBe("base3-free-fable");
+    // Fable HANYA ada di peta base2 binary resmi (`base2-free-fable`); ia tidak
+    // pernah masuk peta base3. Memetakannya ke base3 = 404 "No endpoints found".
+    expect(rootAgentIdForModel("anthropic/claude-fable-5")).toBe("base2-free-fable");
+
     // Withdrawn upstream models are unmapped — they fall back.
     //
-    // Fallback-nya WAJIB base3, bukan base2: harness CLI sudah pindah dari
-    // base2 ke base3, dan backend menolak root lama dengan 404 "No endpoints
-    // found". Fallback base2 berarti model yang tidak dikenal gagal 404
-    // alih-alih memakai root generik yang masih hidup.
-    expect(rootAgentIdForModel("meta/muse-spark-1.3-contributor")).toBe("base3-free");
-    expect(rootAgentIdForModel("deepseek/deepseek-v4-pro")).toBe("base3-free");
-    expect(rootAgentIdForModel("minimax/minimax-m3")).toBe("base3-free");
-    expect(rootAgentIdForModel("some/unknown-model")).toBe("base3-free");
+    // Fallback-nya WAJIB "base2-free", persis seperti binary resmi:
+    //   rw$(m) { return Kt === "base3" ? n6A(m) : FKH(m) }
+    //   n6A(m) { return PKH[m] ?? FKH(m) }
+    //   FKH(m) { return nw$[m] ?? "base2-free" }
+    // Model yang tidak ada di peta base3 (PKH) jatuh ke peta base2 (nw$), dan
+    // fallback terakhir di rantai itu adalah "base2-free".
+    //
+    // "base3-free" TIDAK PERNAH ada di binary: nol kemunculan `id:"base3-free"`
+    // dan tidak ada di daftar agent bebas `iw$`.
+    expect(rootAgentIdForModel("meta/muse-spark-1.3-contributor")).toBe("base2-free");
+    expect(rootAgentIdForModel("deepseek/deepseek-v4-pro")).toBe("base2-free");
+    expect(rootAgentIdForModel("minimax/minimax-m3")).toBe("base2-free");
+    expect(rootAgentIdForModel("some/unknown-model")).toBe("base2-free");
 
-    // Tidak boleh ada satu pun jalur yang masih menghasilkan root base2 —
-    // itulah bug yang diperbaiki.
+    // Model tak dikenal memang BOLEH menyentuh peta base2 — itu jalur resmi
+    // (nw$ memuat banyak model yang tidak ada di PKH). Yang dilarang adalah
+    // mengarang agent id yang tidak terdefinisi di binary, terutama
+    // "base3-free" telanjang.
     for (const m of [
       "meta/muse-spark-1.3-contributor",
       "deepseek/deepseek-v4-pro",
@@ -543,7 +555,16 @@ describe("freebuff run registration", () => {
       "",
       null,
     ]) {
-      expect(rootAgentIdForModel(m), `model ${m} masih memakai root base2`).not.toContain("base2");
+      const id = rootAgentIdForModel(m);
+      expect(id, `model ${m} menghasilkan agent yang tidak terdefinisi di binary`).not.toBe("base3-free");
+      expect(KNOWN_ROOT_AGENTS.has(id), `agent "${id}" tidak terdaftar di binary resmi`).toBe(true);
+    }
+
+    // Setiap agent yang dipetakan harus benar-benar ada di binary resmi —
+    // menebak id hanya memindahkan 404 ke 404.
+    for (const m of Object.keys(FREE_ROOT_AGENT_BY_MODEL)) {
+      const id = rootAgentIdForModel(m);
+      expect(KNOWN_ROOT_AGENTS.has(id), `agent "${id}" (model ${m}) tidak terdaftar di binary resmi`).toBe(true);
     }
   });
 
