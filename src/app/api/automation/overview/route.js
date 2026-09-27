@@ -55,6 +55,9 @@ export const GET = requireGate(async () => {
       refreshable: !!entry.refreshable,
       expiry: !!entry.expiry,
       modelAssign: !!entry.modelAssign,
+      // Panduan "tambah via script" (salin perintah + file email:password).
+      // Ikut dikirim supaya panel tidak mengarang perintahnya sendiri.
+      script: entry.script || null,
       counts: { total: mine.length, active, problem, unknown },
     };
   });

@@ -21,6 +21,12 @@
  * `label` dan `hint` ditulis untuk operator yang tahu providernya tapi tidak
  * tahu langkah berikutnya.
  */
+/**
+ * Fokus: hanya device-code dari 7 provider yang dikelola menu Automation
+ * (lihat catalogue.js). Provider device-code lain (kimi, codebuddy, qoder,
+ * meta-code, github) tetap bisa ditambah dari halaman Providers — di sini
+ * tidak ditawarkan supaya menu ini tetap sesuai cakupannya.
+ */
 export const AUTOMATION_PROVIDERS = [
   {
     id: "kiro",
@@ -28,15 +34,8 @@ export const AUTOMATION_PROVIDERS = [
     hint: "AWS Builder ID / IDC. Membutuhkan start URL kalau memakai IDC.",
     needsStartUrl: true,
   },
-  { id: "grok-cli", label: "Grok CLI", hint: "Device code HAR, tanpa PKCE." },
+  { id: "grok-cli", label: "Grok CLI", hint: "Device code, tanpa PKCE." },
   { id: "kilocode", label: "Kilo Code", hint: "Device code, tanpa PKCE." },
-  { id: "kimi", label: "Kimi", hint: "Device ID dipakai ulang agar perangkat stabil." },
-  { id: "codebuddy-cn", label: "CodeBuddy (CN)", hint: "Device code, tanpa PKCE." },
-  { id: "codebuddy-intl", label: "CodeBuddy (INTL)", hint: "Device code, tanpa PKCE." },
-  { id: "qoder", label: "Qoder", hint: "Membawa machineId + nonce dari respons device code." },
-  { id: "meta-code", label: "meta-code (Muse)", hint: "Device code, tanpa PKCE." },
-  { id: "github", label: "GitHub", hint: "Device code, tanpa PKCE." },
-  { id: "freebuff", label: "Freebuff", hint: "Device flow. Akun Freebuff mudah kena batasan." },
 ];
 
 export function isAutomationProvider(id) {

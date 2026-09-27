@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Input } from "@/shared/components";
+import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import {
   selectByIndex,
   selectAgGroupDepleted,
@@ -35,6 +36,10 @@ import {
  * Dua hal yang SENGAJA tidak ada di sini (lihat ProviderPanel): login browser
  * pakai `email:password`, dan hapus otomatis saat pemindaian. Setiap hapus di
  * sini memakai daftar pratinjau yang terlihat dulu + konfirmasi.
+ *
+ * Yang ADA: panel "Tambah akun baru via script" — panduan salin perintah +
+ * file email:password. Script-nya jalan di terminal sendiri (bukan di server),
+ * dan akun yang dipanen langsung muncul di menu ini karena DB-nya sama.
  */
 export default function ProviderOps({
   providerId,
@@ -51,6 +56,7 @@ export default function ProviderOps({
   const hasOps =
     kinds.selective || kinds.refresh || kinds.verify || kinds.cleanup ||
     kinds.patternDelete || kinds.blocked || kinds.expiryOps || kinds.inactive ||
+    kinds.deviceBulk || info?.script ||
     providerId === "antigravity" || providerId === "kiro";
 
   if (!hasOps) return null;
@@ -60,6 +66,12 @@ export default function ProviderOps({
       <h3 className="text-xs font-semibold uppercase tracking-wide text-text-subtle">
         Operasi {info?.label || providerId}
       </h3>
+
+      {info?.script ? <ScriptGuide info={info} /> : null}
+
+      {kinds.deviceBulk ? (
+        <DeviceBulk providerId={providerId} onChanged={onChanged} />
+      ) : null}
 
       {kinds.selective ? (
         <SelectiveOps rows={visible.length ? visible : rows} running={running} runOp={runOp} />
@@ -117,7 +129,334 @@ export default function ProviderOps({
 
       {kinds.inactive ? <InactiveOps rows={rows} running={running} onDelete={onDelete} /> : null}
 
-      <TxtBuilder providerId={providerId} />
+      <TxtBuilder providerId={providerId} accountsFile={info?.script?.accountsFile} />
+    </div>
+  );
+}
+
+/**
+ * Panduan "tambah akun baru via script".
+ *
+ * Cara kerjanya SAMA di semua provider: salin perintah + siapkan berkas
+ * `email:password` → jalankan script Python di terminal sendiri → script
+ * membuka browser dan login otomatis → token masuk DB 9Router yang sama →
+ * akun langsung muncul di menu ini setelah tekan "Muat ulang".
+ *
+ * Password TIDAK PERNAH menyentuh server: berkas dibuat oleh TxtBuilder di
+ * browser, dan script jalan di mesin operator. Yang ditampilkan di sini hanya
+ * perintah siap-salin dari katalog (ditulis dari argparse tiap script).
+ */
+function ScriptGuide({ info }) {
+  const s = info?.script;
+  const [reloaded, setReloaded] = useState(false);
+  const { copied, copy } = useCopyToClipboard();
+  if (!s) return null;
+
+  return (
+    <details className="rounded-[10px] border border-border-subtle bg-bg-subtle/50" open>
+      <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-text-main">
+        Tambah akun baru via script — salin perintah, jalan lokal
+      </summary>
+      <div className="flex flex-col gap-2 px-3 pb-3">
+        <ol className="flex list-decimal flex-col gap-1 pl-5 text-[11px] text-text-muted">
+          <li>
+            Buat berkas <code className="font-mono text-text-main">{s.accountsFile}</code> di bawah
+            (paste email + 1 password → Unduh) — bentuk <code className="font-mono text-text-main">{s.format}</code>.
+          </li>
+          <li>
+            Jalankan di terminal, di folder scriptnya
+            (<code className="font-mono text-text-main">C:\Users\Developer\cliproxyapi</code>):
+          </li>
+        </ol>
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-2 py-1.5">
+          <code className="min-w-0 flex-1 break-all font-mono text-[11px] text-text-main">{s.command}</code>
+          <button
+            type="button"
+            onClick={() => copy(s.command, "script-cmd")}
+            className="flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-text-muted transition-colors hover:bg-bg-hover hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
+          >
+            <span className="material-symbols-outlined text-[13px]" aria-hidden="true">
+              {copied === "script-cmd" ? "check" : "content_copy"}
+            </span>
+            {copied === "script-cmd" ? "Tersalin" : "Salin"}
+          </button>
+        </div>
+        {s.extra ? (
+          <p className="text-[11px] text-text-subtle">Flag berguna: <code className="font-mono">{s.extra}</code></p>
+        ) : null}
+        <ol className="flex list-decimal flex-col gap-1 pl-5 text-[11px] text-text-muted" start={3}>
+          <li>
+            Script membuka browser dan login otomatis per akun. Setelah selesai, tekan Muat ulang —
+            akun yang dipanen langsung muncul di tabel bawah (DB-nya sama, tanpa impor ulang).
+          </li>
+        </ol>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            icon="refresh"
+            onClick={() => {
+              window.location.reload();
+              setReloaded(true);
+            }}
+          >
+            {reloaded ? "Memuat…" : "Muat ulang"}
+          </Button>
+        </div>
+      </div>
+    </details>
+  );
+}
+
+/**
+ * Antrean device-flow bulk (grok-cli, kilocode, kiro).
+ *
+ * Sepenuhnya via web, tanpa password: minta kode → operator menyetujui di
+ * browser sendiri → token tersimpan → otomatis lanjut ke akun berikutnya.
+ * Memakai endpoint yang sama dengan tab "Login device" (`device/start` +
+ * `device/poll`), dibungkus antrean sekuensial. Sekuensial itu disengaja:
+ * upstream device-code membatasi permintaan pending paralel (kilo menjawab
+ * 429 + "Too many pending"), dan dua kode di layar bersamaan membuat
+ * operator menyetujui yang salah.
+ *
+ * Menutup tab/berganti tab menghentikan antrean di titik terakhir — yang
+ * sudah tersimpan tidak hilang, yang belum tinggal dimulai lagi.
+ */
+function DeviceBulk({ providerId, onChanged }) {
+  const [total, setTotal] = useState(3);
+  const [phase, setPhase] = useState("idle"); // idle | waiting | done
+  const [flow, setFlow] = useState(null);
+  const [done, setDone] = useState([]);
+  const [skipped, setSkipped] = useState(0);
+  const [error, setError] = useState("");
+  const [now, setNow] = useState(() => Date.now());
+  // Generasi sesi: "Lewati" menaikkan generasi sehingga polling lama
+  // diabaikan saat jawabannya tiba — tanpa ini, jawaban sesi yang dilewati
+  // bisa tercatat sebagai akun yang tersimpan.
+  const genRef = useRef(0);
+  const stopRef = useRef(false);
+  const pollTimer = useRef(null);
+  const { copied, copy } = useCopyToClipboard();
+
+  const current = done.length + skipped + 1;
+
+  useEffect(() => () => {
+    stopRef.current = true;
+    if (pollTimer.current) clearTimeout(pollTimer.current);
+  }, []);
+
+  useEffect(() => {
+    if (phase !== "waiting") return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [phase]);
+
+  const requestCode = async () => {
+    const res = await fetch("/api/automation/device/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: providerId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    const url = data.verificationUriComplete || data.verificationUri;
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+    return {
+      deviceCode: data.deviceCode,
+      codeVerifier: data.codeVerifier,
+      extraData: data.extraData,
+      userCode: data.userCode,
+      verificationUri: data.verificationUri,
+      verificationUriComplete: data.verificationUriComplete,
+      interval: data.interval || 5,
+      deadline: Date.now() + (data.expiresIn ? data.expiresIn * 1000 : 15 * 60 * 1000),
+    };
+  };
+
+  // Satu langkah antrean: minta kode generasi ini, tampilkan, poll sampai
+  // sukses dilewati/dihentikan. Mengembalikan "ok" | "skipped" | "stopped".
+  const runStep = (gen, target) =>
+    new Promise((resolve) => {
+      let session = null;
+      const finish = (v) => {
+        if (pollTimer.current) clearTimeout(pollTimer.current);
+        resolve(v);
+      };
+      const tick = async () => {
+        if (stopRef.current || genRef.current !== gen) return finish("stopped");
+        // Langkah "Lewati" ditandai lewat generasi juga — polling ini milik
+        // generasi lama, jadi berhenti sendiri.
+        if (!session) {
+          try {
+            session = await requestCode();
+          } catch (e) {
+            if (genRef.current !== gen || stopRef.current) return finish("stopped");
+            setError(e?.message || "Gagal meminta kode");
+            return finish("stopped");
+          }
+          if (genRef.current !== gen || stopRef.current) return finish("stopped");
+          setFlow({ ...session, index: target });
+          setError("");
+        }
+        let data = {};
+        try {
+          const res = await fetch("/api/automation/device/poll", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              provider: providerId,
+              deviceCode: session.deviceCode,
+              codeVerifier: session.codeVerifier,
+              extraData: session.extraData,
+            }),
+          });
+          data = await res.json().catch(() => ({}));
+        } catch {
+          if (genRef.current !== gen || stopRef.current) return finish("stopped");
+          pollTimer.current = setTimeout(tick, 5000);
+          return;
+        }
+        if (genRef.current !== gen || stopRef.current) return finish("stopped");
+        if (data.success) {
+          setDone((d) => [...d, data.connection]);
+          onChanged?.();
+          return finish("ok");
+        }
+        if (data.pending) {
+          if (Date.now() > session.deadline) {
+            setError("Waktu habis — kode kedaluwarsa. Antrean berhenti di sini.");
+            return finish("stopped");
+          }
+          pollTimer.current = setTimeout(tick, (session.interval || 5) * 1000);
+          return;
+        }
+        setError(data.errorDescription || data.error || "Gagal menukar token");
+        return finish("stopped");
+      };
+      tick();
+    });
+
+  const start = async () => {
+    const n = Math.max(1, Math.min(50, Number(total) || 1));
+    const gen = genRef.current + 1;
+    genRef.current = gen;
+    stopRef.current = false;
+    setDone([]);
+    setSkipped(0);
+    setError("");
+    setFlow(null);
+    setPhase("waiting");
+    for (let i = 0; i < n; i++) {
+      const r = await runStep(gen, i + 1);
+      if (r !== "ok") break;
+    }
+    setFlow(null);
+    setPhase("done");
+  };
+
+  const stop = () => {
+    stopRef.current = true;
+    genRef.current += 1;
+    if (pollTimer.current) clearTimeout(pollTimer.current);
+    setFlow(null);
+    setPhase("done");
+  };
+
+  const skip = () => {
+    // Naikkan generasi: polling sesi ini diabaikan saat jawabannya tiba,
+    // dan langkah berikutnya dimulai dengan kode baru.
+    genRef.current += 1;
+    if (pollTimer.current) clearTimeout(pollTimer.current);
+    setSkipped((s) => s + 1);
+    setFlow(null);
+    setError("");
+    void (async () => {
+      const gen = genRef.current;
+      // Sisa target dihitung dari yang sudah selesai + dilewati.
+      const target = done.length + skipped + 1;
+      const r = await runStep(gen, target);
+      if (r !== "ok") {
+        setFlow(null);
+        setPhase("done");
+      }
+    })();
+  };
+
+  const busy = phase === "waiting";
+  const remain = flow?.deadline ? Math.max(0, Math.floor((flow.deadline - now) / 1000)) : 0;
+
+  return (
+    <div className="flex flex-col gap-2 rounded-[10px] border border-border-subtle bg-bg-subtle/50 p-3">
+      <p className="text-xs font-medium text-text-main">
+        Tambah bulk via device
+        <span className="ml-2 font-normal text-text-subtle">sepenuhnya via web — kamu yang menyetujui di browser</span>
+      </p>
+
+      {phase === "idle" || phase === "done" ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <div className="w-32">
+            <Input label="Jumlah akun" type="number" value={total} onChange={(e) => setTotal(e.target.value)} disabled={busy} />
+          </div>
+          <Button size="sm" variant="secondary" icon="login" disabled={busy} onClick={start}>
+            Mulai antrean
+          </Button>
+          {done.length > 0 || skipped > 0 ? (
+            <span className="pb-2 text-[11px] tabular-nums text-text-muted">
+              Terakhir: {done.length} tersimpan{skipped ? `, ${skipped} dilewati` : ""}.
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {error ? <p role="alert" className="text-[11px] font-medium text-error">{error}</p> : null}
+
+      {busy && flow ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
+          <p className="text-[11px] tabular-nums text-text-muted">
+            Akun {flow.index || current} — setujui di browser, lalu otomatis lanjut.
+            {remain > 0 ? ` Kode kedaluwarsa dalam ${Math.floor(remain / 60)}:${String(remain % 60).padStart(2, "0")}.` : ""}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="rounded-lg bg-bg-subtle px-3 py-1.5 font-mono text-base font-semibold tracking-wider text-text-main">
+              {flow.userCode || "—"}
+            </code>
+            <button
+              type="button"
+              onClick={() => copy(flow.userCode || "", "bulk-code")}
+              className="flex items-center gap-1 rounded-lg border border-border px-2 py-1.5 text-xs font-medium text-text-muted transition-colors hover:bg-bg-hover hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
+            >
+              <span className="material-symbols-outlined text-[15px]" aria-hidden="true">
+                {copied === "bulk-code" ? "check" : "content_copy"}
+              </span>
+              {copied === "bulk-code" ? "Tersalin" : "Salin"}
+            </button>
+            {flow.verificationUri ? (
+              <a
+                href={flow.verificationUriComplete || flow.verificationUri}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-primary underline decoration-dotted underline-offset-2"
+              >
+                Buka verifikasi
+              </a>
+            ) : null}
+          </div>
+          <p className="flex items-center gap-2 text-[11px] text-text-muted">
+            <span className="size-1.5 animate-pulse rounded-full bg-primary" aria-hidden="true" />
+            Menunggu persetujuan… (tab verifikasi sudah dibuka otomatis)
+          </p>
+          <div className="flex gap-2">
+            <Button size="sm" variant="ghost" onClick={skip}>Lewati akun ini</Button>
+            <Button size="sm" variant="ghost" onClick={stop}>Hentikan antrean</Button>
+          </div>
+        </div>
+      ) : null}
+
+      {phase === "done" && !busy ? (
+        <p className="rounded-lg border border-success/20 bg-success/10 px-3 py-2 text-xs font-medium text-success">
+          Selesai: {done.length} akun tersimpan{skipped ? `, ${skipped} dilewati` : ""}. Tabel di bawah sudah dimuat ulang.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -558,15 +897,20 @@ function InactiveOps({ rows, running, onDelete }) {
 
 /**
  * Generator TXT pembuat (menu 10 skrip `ag`, menu 9 `grok`, menu 8 `kiro`/`bai`):
- * paste email + satu password seragam → unduh `email:password`.
+ * paste email + satu password seragam → unduh berkas akun.
  *
  * Murni client-side: tidak ada kredensial yang dikirim ke server, tidak ada
- * login. Bentuk keluarannya sama dengan yang dimakan skrip (`email:password`
- * per baris) supaya bisa dipakai untuk tambah akun lewat skrip.
+ * login. Nama berkas + pemisah mengikuti katalog (`script.accountsFile`,
+ * format tiap script) supaya berkasnya langsung bisa dipakai perintah di
+ * ScriptGuide tanpa diganti nama.
  */
-function TxtBuilder({ providerId }) {
+function TxtBuilder({ providerId, accountsFile }) {
   const [emails, setEmails] = useState("");
   const [password, setPassword] = useState("");
+
+  // Pemisah per provider: skrip cline/kiro/bai menerima `|`, sisanya `:`.
+  // Default `:` karena semua skrip memakannya.
+  const sep = providerId === "cline" || providerId === "kiro" || providerId === "bai" ? "|" : ":";
 
   const lines = useMemo(() => {
     const seen = new Set();
@@ -577,10 +921,10 @@ function TxtBuilder({ providerId }) {
       const k = e.toLowerCase();
       if (seen.has(k)) continue;
       seen.add(k);
-      out.push(`${e}:${password}`);
+      out.push(`${e}${sep}${password}`);
     }
     return out;
-  }, [emails, password]);
+  }, [emails, password, sep]);
 
   const download = () => {
     if (!lines.length || !password) return;
@@ -588,7 +932,7 @@ function TxtBuilder({ providerId }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `accounts_${providerId || "bulk"}.txt`;
+    a.download = accountsFile || `accounts_${providerId || "bulk"}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -602,8 +946,9 @@ function TxtBuilder({ providerId }) {
       </summary>
       <div className="flex flex-col gap-2 px-3 pb-3">
         <p className="text-[11px] text-text-muted">
-          Keluaran <code className="font-mono">email:password</code> per baris — bentuk yang dimakan skrip
-          tambah-akun. Tidak dikirim ke mana pun; berkas dibuat di browser.
+          Keluaran <code className="font-mono">email{sep}password</code> per baris →{" "}
+          <code className="font-mono">{accountsFile || `accounts_${providerId || "bulk"}.txt`}</code> —
+          bentuk yang dimakan skrip tambah-akun. Tidak dikirim ke mana pun; berkas dibuat di browser.
         </p>
         <textarea
           value={emails}
