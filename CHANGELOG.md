@@ -1,3 +1,22 @@
+# v0.5.123 (2026-09-27) — 9router-imagefix
+
+## Features
+- **Automation dikunci ke 7 provider + panduan tambah via script.** Katalog
+  Kelola akun: antigravity, bai, cline, grok-cli, kilocode (baru),
+  tokenharbour, kiro. freebuff keluar dari menu ini (tetap dari Providers).
+
+  Tiap panel punya panduan "Tambah akun baru via script": perintah siap-salin
+  dari argparse tiap script + nama file + format baris. Cara kerja: salin
+  perintah + file `email:password` → script jalan lokal → akun muncul di sini
+  (DB sama). Password tidak pernah menyentuh server.
+
+  Antrean device-flow bulk (grok/kiro/kilocode): minta kode → setujui di
+  browser sendiri → otomatis lanjut. Sepenuhnya via web, tanpa password.
+  Sekuensial + generasi sesi. Tab Login device difokuskan ke 3 provider itu.
+
+## Tests
+- 40/40 automation lolos; lint bersih; build OK.
+
 # v0.5.122 (2026-09-27) — 9router-imagefix
 
 ## Features
