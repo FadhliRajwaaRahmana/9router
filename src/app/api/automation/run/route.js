@@ -5,6 +5,9 @@ import {
   startQuotaCheck,
   startConnectionTest,
   startDelete,
+  startRefresh,
+  startDeactivate,
+  startKeyVerify,
 } from "@/lib/automation/operations";
 
 export const dynamic = "force-dynamic";
@@ -38,13 +41,53 @@ export const POST = requireGate(async (request) => {
 
   const connections = await getProviderConnections(provider ? { provider } : {});
 
+  // `ids` opsional untuk quota/test = cek akun tertentu ala skrip `ag` menu 5
+  // ("50", "1-10"). Klien menerjemahkan pilihannya menjadi id; id yang tidak
+  // ada diabaikan diam-diam oleh operasinya. Batas 500 sama seperti delete.
+  const selectedIds = Array.isArray(ids) && ids.length ? ids.slice(0, 500) : null;
+
   if (op === "quota") {
-    const job = await startQuotaCheck({ origin, cookie, connections, provider });
+    const job = await startQuotaCheck({ origin, cookie, connections, provider, ids: selectedIds });
     return NextResponse.json({ jobId: job.id, total: job.total }, { headers: NO_STORE });
   }
 
   if (op === "test") {
-    const job = await startConnectionTest({ origin, cookie, connections, provider });
+    const job = await startConnectionTest({ origin, cookie, connections, provider, ids: selectedIds });
+    return NextResponse.json({ jobId: job.id, total: job.total }, { headers: NO_STORE });
+  }
+
+  // Refresh token massal (menu 6 skrip `cline`): semua akun provider ini yang
+  // punya refreshToken, tanpa login ulang.
+  if (op === "refresh") {
+    const job = await startRefresh({ connections, provider });
+    return NextResponse.json({ jobId: job.id, total: job.total }, { headers: NO_STORE });
+  }
+
+  // Verifikasi key kustom via inferensi nyata (b.ai `sk-…`, tokenharbor
+  // `thk_…`) — `check_key_quota_live` di kedua skrip. 401/402/429
+  // diklasifikasi menjadi keadaan, bukan error mentah.
+  if (op === "verify") {
+    const job = await startKeyVerify({ connections, provider });
+    return NextResponse.json({ jobId: job.id, total: job.total }, { headers: NO_STORE });
+  }
+
+  // Nonaktifkan (bukan hapus) — perilaku default cleanup expired skrip
+  // tokenharbor. Dipisah dari delete karena "tidak dipakai sementara" dan
+  // "dibuang permanen" adalah dua keputusan berbeda.
+  if (op === "deactivate") {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return NextResponse.json(
+        { error: "Isi `ids` dengan koneksi yang mau dinonaktifkan" },
+        { status: 400, headers: NO_STORE },
+      );
+    }
+    if (ids.length > 500) {
+      return NextResponse.json(
+        { error: "Terlalu banyak sekaligus (maks 500)" },
+        { status: 400, headers: NO_STORE },
+      );
+    }
+    const job = await startDeactivate({ connections, ids, reason });
     return NextResponse.json({ jobId: job.id, total: job.total }, { headers: NO_STORE });
   }
 

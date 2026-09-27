@@ -1,7 +1,7 @@
 /**
  * Katalog provider menu Automation.
  *
- * ── Enam provider, sesuai enam skrip ────────────────────────────────────────
+ * ── Tujuh provider, sesuai enam skrip + kiro ───────────────────────────────
  *
  *   antigravity  ←  add-account-ag-9router.py        (117 akun)
  *   b.ai         ←  add-account-bai-9router.py       (600 akun)
@@ -9,6 +9,9 @@
  *   grok-cli     ←  add-account-grok-9router.py      (156 akun)
  *   tokenharbour ←  add-account-tokenharbor-...py    (118 akun)
  *   freebuff     ←  add-freebuff-deviceflow-...py    (1 akun)
+ *   kiro         ←  add-account-kiro-9router.py      (baru: impor bulk
+ *                   refreshToken via POST oauth/kiro/import, pool kuota
+ *                   credits, hapus depleted/error)
  *
  * Katalog ini MENENTUKAN bentuk menu: provider yang tidak ada di sini tidak
  * muncul, dan fitur yang tidak dicentang tidak ditawarkan. Itu disengaja —
@@ -41,7 +44,7 @@ export const AUTOMATION_CATALOGUE = [
     label: "Antigravity",
     source: "add-account-ag-9router.py",
     accountKind: "oauth",
-    kinds: { quota: true, test: true, prompt: true, import: "token", calls: "browser" },
+    kinds: { quota: true, test: true, prompt: true, import: "token", calls: "browser", refresh: true, selective: true, inactive: true },
     /** Grup kuota dari skrip, dipakai untuk menamai baris di tabel. */
     note: "Kuota per grup model (Gemini / Claude & GPT). Reset time tersedia.",
   },
@@ -52,7 +55,7 @@ export const AUTOMATION_CATALOGUE = [
     source: "add-account-bai-9router.py",
     accountKind: "apikey",
     keyPrefix: "sk-",
-    kinds: { quota: false, test: true, prompt: true, import: "key", calls: "browser" },
+    kinds: { quota: false, test: true, prompt: true, import: "key", calls: "browser", verify: true },
     note: "Kuota diperiksa lewat inferensi nyata (tidak ada endpoint saldo).",
   },
   {
@@ -60,7 +63,7 @@ export const AUTOMATION_CATALOGUE = [
     label: "Cline",
     source: "add-account-cline-oauth-9router.py",
     accountKind: "oauth",
-    kinds: { quota: false, test: true, prompt: true, import: "token", calls: "browser" },
+    kinds: { quota: false, test: true, prompt: true, import: "token", calls: "browser", refresh: true, cleanup: true },
     refreshable: true,
     note: "Token berumur 1 jam; refresh proaktif ambang 300 detik.",
   },
@@ -69,7 +72,7 @@ export const AUTOMATION_CATALOGUE = [
     label: "Grok CLI",
     source: "add-account-grok-9router.py",
     accountKind: "oauth",
-    kinds: { quota: true, test: true, prompt: true, import: "token", calls: "browser" },
+    kinds: { quota: true, test: true, prompt: true, import: "token", calls: "browser", refresh: true, selective: true, patternDelete: true, blocked: true },
     note: "Kuota billing + deteksi team_blocked langsung ke xAI.",
   },
   {
@@ -79,7 +82,7 @@ export const AUTOMATION_CATALOGUE = [
     source: "add-account-tokenharbor-9router.py",
     accountKind: "apikey",
     keyPrefix: "thk_",
-    kinds: { quota: false, test: true, prompt: true, import: "key", calls: "browser" },
+    kinds: { quota: false, test: true, prompt: true, import: "key", calls: "browser", verify: true, expiryOps: true },
     /** Akun bisa diberi masa berlaku saat diimpor. */
     expiry: true,
     note: "Mendukung masa berlaku akun (expire hours) dan pembersihan otomatis.",
@@ -93,6 +96,18 @@ export const AUTOMATION_CATALOGUE = [
     /** Satu akun = satu model, kalau tidak upstream menjawab 409 model_locked. */
     modelAssign: true,
     note: "Satu akun hanya boleh memakai satu model; login lewat device flow.",
+  },
+  {
+    id: "kiro",
+    label: "Kiro",
+    source: "add-account-kiro-9router.py",
+    accountKind: "oauth",
+    kinds: { quota: true, test: true, prompt: true, import: "token", calls: "browser", refresh: true },
+    refreshable: true,
+    /** Impor bulk refreshToken (format skrip: email|refreshToken) lewat
+        POST oauth/kiro/import yang memvalidasi via refresh — token mati
+        langsung ditolak saat impor, bukan sesudahnya. */
+    note: "Pool kuota credits + tanggal reset. Impor refreshToken tervalidasi.",
   },
 ];
 

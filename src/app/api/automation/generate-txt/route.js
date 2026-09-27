@@ -22,6 +22,8 @@ const NO_STORE = { "Cache-Control": "no-store, must-revalidate" };
  *   b.ai         → email:sk-...              (dari `export_bai_keys`)
  *   tokenharbour → email:thk_...:jam         (dari `_iter_tokenharbor_export_lines`;
  *                                             jam = expire_hours, opsional)
+ *   kiro         → email:refreshToken        (dari `output/keys/kiro_keys.txt`;
+ *                                             pemisah skrip `|` juga diterima saat impor)
  *
  * Bentuknya SENGAJA berbeda antar provider karena tiap skrip punya parsernya
  * sendiri, dan berkas ini harus bisa dibaca kembali oleh skrip itu. Menyeragamkan
@@ -98,10 +100,10 @@ export const GET = requireGate(async (request) => {
       continue;
     }
 
-    // antigravity, grok-cli, freebuff: email:<token>
-    // Untuk antigravity dan grok-cli, refresh token yang berguna (access token
-    // berumur pendek dan bisa di-refresh); freebuff hanya punya access token.
-    const token = entry.refreshable || entry.id === "grok-cli" || entry.id === "antigravity"
+    // antigravity, grok-cli, freebuff, kiro: email:<token>
+    // Untuk antigravity, grok-cli, dan kiro, refresh token yang berguna (access
+    // token berumur pendek dan bisa di-refresh); freebuff hanya punya access token.
+    const token = entry.refreshable || entry.id === "grok-cli" || entry.id === "antigravity" || entry.id === "kiro"
       ? c.refreshToken || c.accessToken
       : c.accessToken;
     if (!token) { skipped++; continue; }
@@ -136,6 +138,7 @@ function txtShape(entry) {
   switch (entry.id) {
     case "antigravity":
     case "grok-cli":
+    case "kiro":
       return "email:refreshToken";
     case "cline":
       return "email:accessToken:refreshToken";

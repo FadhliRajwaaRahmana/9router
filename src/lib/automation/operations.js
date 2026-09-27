@@ -1,4 +1,4 @@
-import { deleteProviderConnection } from "@/lib/localDb";
+import { deleteProviderConnection, updateProviderConnection } from "@/lib/localDb";
 import { createJob, runJob } from "./jobs.js";
 
 /**
@@ -55,11 +55,71 @@ export const PROVIDERS_WITH_USAGE = new Set([
 ]);
 
 /**
+ * Samakan bentuk `quotas` dari semua handler menjadi daftar baris.
+ *
+ * Handler 9Router TIDAK sepakat bentuknya: sebagian mengembalikan array
+ * (`[{modelId, remainingPercentage}]`), sebagian objek
+ * (`{label: {used, total, remainingPercentage?}}` — kiro, grok-cli,
+ * antigravity, freebuff). Keduanya diterima di sini supaya "Cek kuota" tidak
+ * buta untuk provider objek — tanpanya, kiro selalu menjawab "tidak terbaca"
+ * padahal datanya ada.
+ *
+ * Baris tanpa `remainingPercentage` tapi punya `used`/`total` (kiro) dihitung
+ * persennya di sini; baris tanpa keduanya tetap "tidak terukur", bukan nol.
+ */
+function normalizeQuotaRows(usage) {
+  const q = usage?.quotas;
+  let rows = [];
+  if (Array.isArray(q)) {
+    rows = q.map((e, i) => ({
+      label: e?.displayName || e?.modelId || e?.model || `#${i + 1}`,
+      ...(e || {}),
+    }));
+  } else if (q && typeof q === "object") {
+    rows = Object.entries(q).map(([name, e]) => ({
+      label: e?.displayName || e?.modelId || name,
+      ...((e && typeof e === "object") ? e : {}),
+    }));
+  }
+  return rows.map((e) => {
+    let pct = typeof e.remainingPercentage === "number" ? e.remainingPercentage : null;
+    if (pct == null || !Number.isFinite(pct)) {
+      const used = Number(e.used);
+      const total = Number(e.total);
+      const rem = Number(e.remaining);
+      if (Number.isFinite(used) && Number.isFinite(total) && total > 0) {
+        pct = (Math.max(0, total - used) / total) * 100;
+      } else if (Number.isFinite(rem) && Number.isFinite(total) && total > 0) {
+        pct = (Math.max(0, rem) / total) * 100;
+      } else {
+        pct = null;
+      }
+    }
+    return { ...e, remainingPercentage: pct };
+  });
+}
+
+/**
+ * Persentase terendah satu keluarga model, atau null bila tidak ada barisnya.
+ *
+ * Ini cara skrip `ag` membaca kuota: DUA grup (Gemini vs Claude & GPT), bukan
+ * satu angka global. Baris mingguan ("Gemini (Weekly)") ikut karena labelnya
+ * cocok polanya. `null` berarti "tidak terbaca" — dan TIDAK PERNAH dihitung
+ * sebagai 0 (itu bug skrip yang menghilangkan sentinel -1).
+ */
+function groupPct(measured, re) {
+  const fam = measured.filter((q) => re.test(String(q.label || "")));
+  if (!fam.length) return null;
+  return Math.min(...fam.map((q) => q.remainingPercentage));
+}
+
+/**
  * Ubah payload `GET /api/usage/{id}` menjadi keadaan yang bisa dipakai UI.
  *
  * Bentuk payloadnya berbeda antar provider — ada yang mengembalikan `quotas[]`,
- * ada yang mengembalikan `message`, ada yang mengembalikan `plan` saja. Yang
- * TIDAK boleh terjadi: menyimpulkan "habis" dari ketiadaan data.
+ * ada yang mengembalikan objek `quotas{}`, ada yang mengembalikan `message`,
+ * ada yang mengembalikan `plan` saja. Yang TIDAK boleh terjadi: menyimpulkan
+ * "habis" dari ketiadaan data.
  *
  * `remaining` adalah persentase sisa TERENDAH di antara kuota yang terbaca —
  * model yang paling habis menentukan kesehatan akun, karena satu model yang
@@ -81,20 +141,20 @@ export function classifyUsage(usage) {
     };
   }
 
-  const quotas = Array.isArray(usage.quotas) ? usage.quotas : [];
+  const rows = normalizeQuotaRows(usage);
 
   // Kuota yang punya angka. `unlimited` sengaja tidak dihitung sebagai "sisa":
   // akun tanpa batas tidak sedang menipis.
-  const measured = quotas.filter(
-    (q) => typeof q?.remainingPercentage === "number" && !q.unlimited,
+  const measured = rows.filter(
+    (q) => typeof q?.remainingPercentage === "number" && Number.isFinite(q.remainingPercentage) && !q.unlimited,
   );
 
   if (!measured.length) {
     // Akun tanpa kuota terukur bukan akun yang habis. Ini keadaan yang harus
     // ditampilkan apa adanya, bukan dipaksa jadi angka.
     return {
-      state: quotas.length ? "unlimited" : "unknown",
-      reason: quotas.length ? "Tanpa batas kuota terukur" : "Kuota tidak terbaca",
+      state: rows.length ? "unlimited" : "unknown",
+      reason: rows.length ? "Tanpa batas kuota terukur" : "Kuota tidak terbaca",
       remaining: null,
     };
   }
@@ -110,18 +170,46 @@ export function classifyUsage(usage) {
   else if (remaining <= 30) state = "low";
   else state = "healthy";
 
+  // Grup keluarga model ala skrip `ag`: Gemini vs Claude & GPT. Label mingguan
+  // ("Gemini (Weekly)") ikut karena polanya cocok; polanya juga cocok untuk
+  // label modelKey mentah ("gemini-3.8-flash-high") dari handler 9Router.
+  // `null` = tidak terbaca (tidak pernah 0 — itu bug sentinel skrip).
+  const groups = {
+    gemini: groupPct(measured, /gemini/i),
+    claudeGpt: groupPct(measured, /claude|gpt/i),
+  };
+
+  // Pool Kiro: jumlahkan used/total semua baris AGENTIC_REQUEST — persis kolom
+  // "TOTAL POOL KUOTA" di skrip kiro.
+  let pool = null;
+  const poolRows = measured.filter((q) => Number.isFinite(Number(q.used)) && Number.isFinite(Number(q.total)) && Number(q.total) > 0);
+  if (poolRows.length) {
+    const used = poolRows.reduce((s, q) => s + Number(q.used), 0);
+    const total = poolRows.reduce((s, q) => s + Number(q.total), 0);
+    pool = {
+      used,
+      total,
+      remaining: Math.max(0, total - used),
+      remainingPercentage: total > 0 ? (Math.max(0, total - used) / total) * 100 : null,
+    };
+  }
+
   return {
     state,
     // Nama kuota terburuk ikut dibawa: "Gemini 2.5 Pro: 0%" jauh lebih berguna
     // daripada "0%" tanpa konteks.
-    reason: worst?.displayName || worst?.modelId || worst?.model || null,
+    reason: worst?.displayName || worst?.modelId || worst?.model || worst?.label || null,
     remaining: Math.round(remaining * 10) / 10,
     resetAt: worst?.resetAt || null,
+    groups,
+    pool,
     quotas: measured.map((q) => ({
-      label: q.displayName || q.modelId || q.model || "?",
+      label: q.displayName || q.modelId || q.model || q.label || "?",
       remainingPercentage: Math.round((q.remainingPercentage || 0) * 10) / 10,
       resetAt: q.resetAt || null,
       unlimited: !!q.unlimited,
+      ...(Number.isFinite(Number(q.used)) ? { used: Number(q.used) } : {}),
+      ...(Number.isFinite(Number(q.total)) ? { total: Number(q.total) } : {}),
     })),
   };
 }
@@ -278,9 +366,14 @@ async function fetchUsageFor(origin, connectionId, cookie, { force = false } = {
  * permintaan keluar ke provider yang sama, dan 4 sudah cukup untuk membuat
  * pemindaian ratusan akun terasa cepat tanpa terlihat seperti serangan.
  */
-export async function startQuotaCheck({ origin, cookie, connections, provider = null }) {
+export async function startQuotaCheck({ origin, cookie, connections, provider = null, ids = null }) {
+  // `ids` = cek kuota akun tertentu ala skrip `ag` menu 5 ("50", "1-10").
+  // Klien menerjemahkan pilihannya menjadi id; server hanya memfilter — tidak
+  // ada parsing rentang di sini, dan id yang tidak ada diabaikan diam-diam.
+  const wanted = Array.isArray(ids) && ids.length ? new Set(ids) : null;
   const targets = connections.filter((c) => {
     if (provider && c.provider !== provider) return false;
+    if (wanted && !wanted.has(c.id)) return false;
     return true;
   });
 
@@ -347,8 +440,13 @@ export async function startQuotaCheck({ origin, cookie, connections, provider = 
  * logika sendiri, melainkan memakai `POST /api/providers/{id}/test` yang sudah
  * tahu cara menguji 18 provider, termasuk refresh token dan proxy.
  */
-export async function startConnectionTest({ origin, cookie, connections, provider = null }) {
-  const targets = connections.filter((c) => !provider || c.provider === provider);
+export async function startConnectionTest({ origin, cookie, connections, provider = null, ids = null }) {
+  const wanted = Array.isArray(ids) && ids.length ? new Set(ids) : null;
+  const targets = connections.filter((c) => {
+    if (provider && c.provider !== provider) return false;
+    if (wanted && !wanted.has(c.id)) return false;
+    return true;
+  });
 
   const job = createJob({
     kind: "test",
@@ -376,6 +474,95 @@ export async function startConnectionTest({ origin, cookie, connections, provide
         latencyMs: data?.latencyMs ?? null,
         error: data?.valid ? null : data?.error || `HTTP ${res.status}`,
       };
+    },
+    { concurrency: 3 },
+  );
+
+  return job;
+}
+
+/**
+ * Refresh token sekumpulan koneksi (fitur menu 6 skrip `cline`: semua/satu akun,
+ * tanpa login ulang).
+ *
+ * Memakai `refreshProviderCredentials` dari mesin 9Router — handler per provider
+ * sudah tahu endpoint refresh-nya (cline → api.cline.bot/auth/refresh, kiro →
+ * AWS OIDC/sosial, grok-cli → xai, antigravity → Google). Akun tanpa
+ * refreshToken dilewati sebagai gagal yang jelas, bukan dicoba buta.
+ *
+ * Hasil refresh ditulis ke DB oleh pemanggil test (`testSingleConnection` sudah
+ * melakukannya), dan di sini juga — supaya tombol ini berdiri sendiri tanpa
+ * harus dilanjutkan test koneksi.
+ */
+const REFRESHABLE_PROVIDERS = new Set(["cline", "kiro", "grok-cli", "xai", "antigravity", "gemini-cli"]);
+
+export async function startRefresh({ connections, provider = null }) {
+  const targets = connections.filter((c) => {
+    if (provider && c.provider !== provider) return false;
+    return REFRESHABLE_PROVIDERS.has(c.provider) && !!c.refreshToken;
+  });
+
+  const job = createJob({
+    kind: "refresh",
+    label: provider ? `Refresh token ${provider}` : "Refresh token semua akun",
+    total: targets.length,
+    meta: { provider },
+  });
+
+  const { refreshProviderCredentials } = await import("open-sse/services/oauthCredentialManager.js");
+
+  void runJob(
+    job,
+    targets,
+    async (conn) => {
+      try {
+        const credentials = {
+          accessToken: conn.accessToken,
+          refreshToken: conn.refreshToken,
+          idToken: conn.idToken,
+          expiresAt: conn.expiresAt,
+          lastRefreshAt: conn.lastRefreshAt,
+          connectionId: conn.id,
+          providerSpecificData: conn.providerSpecificData,
+        };
+        const merged = await refreshProviderCredentials(conn.provider, credentials, console);
+        if (!merged?.accessToken) {
+          return {
+            ok: false, id: conn.id, name: conn.name, email: conn.email,
+            provider: providerLabel(conn),
+            error: merged?.error || "Refresh gagal — token mungkin dicabut",
+          };
+        }
+        const updateData = {
+          accessToken: merged.accessToken,
+          lastRefreshAt: merged.lastRefreshAt || new Date().toISOString(),
+        };
+        if (merged.refreshToken) updateData.refreshToken = merged.refreshToken;
+        if (merged.idToken) updateData.idToken = merged.idToken;
+        if (merged.expiresAt) updateData.expiresAt = merged.expiresAt;
+        else if (merged.expiresIn) {
+          updateData.expiresAt = new Date(Date.now() + Number(merged.expiresIn) * 1000).toISOString();
+        }
+        if (merged.providerSpecificData) {
+          updateData.providerSpecificData = {
+            ...(conn.providerSpecificData || {}),
+            ...merged.providerSpecificData,
+          };
+        }
+        await updateProviderConnection(conn.id, { ...updateData, testStatus: "active", lastError: null, errorCode: null });
+        return {
+          ok: true, id: conn.id, name: conn.name, email: conn.email,
+          provider: providerLabel(conn),
+          state: "refreshed",
+          reason: "Token diperbarui",
+        };
+      } catch (err) {
+        return {
+          ok: false, id: conn.id, name: conn.name, email: conn.email,
+          provider: providerLabel(conn),
+          error: err?.message || "Refresh gagal",
+        };
+      }
     },
     { concurrency: 3 },
   );
@@ -485,4 +672,195 @@ export function candidatesFromConnections(connections) {
     }
   }
   return picked;
+}
+
+// ── Re-ekspor filter client-safe ────────────────────────────────────────────
+// `filters.js` tidak mengimpor modul server apa pun, jadi aman dipakai komponen
+// klien DAN tes. Re-ekspor di sini supaya pemakaian lama
+// (`operations.selectExpiredConnections`, …) tetap jalan.
+export {
+  selectByIndex,
+  selectAgGroupDepleted,
+  clineCategory,
+  CLINE_CATEGORY_LABEL,
+  selectClineByCategory,
+  selectExpiredConnections,
+  classifyInactiveAccount,
+  selectInactiveConnections,
+  domainBreakdown,
+} from "./filters.js";
+
+/**
+ * Nonaktifkan (bukan hapus) sekumpulan koneksi — perilaku default cleanup
+ * expired skrip tokenharbor: 9Router hanya memakai `isActive=1`, jadi
+ * menonaktifkan tanpa menghapus baris sudah cukup mengeluarkan akun dari
+ * rotasi, dan masih bisa diaktifkan lagi.
+ */
+export async function startDeactivate({ connections, ids, reason = "expired" }) {
+  const wanted = new Set(ids);
+  const targets = connections.filter((c) => wanted.has(c.id));
+
+  const job = createJob({
+    kind: "deactivate",
+    label: `Nonaktifkan ${targets.length} akun`,
+    total: targets.length,
+    meta: { reason },
+  });
+
+  void runJob(job, targets, async (conn) => {
+    try {
+      await updateProviderConnection(conn.id, { isActive: false });
+      return {
+        ok: true, id: conn.id, name: conn.name, email: conn.email,
+        provider: providerLabel(conn),
+      };
+    } catch (err) {
+      return {
+        ok: false, id: conn.id, name: conn.name, email: conn.email,
+        provider: providerLabel(conn),
+        error: err?.message || "Gagal menonaktifkan",
+      };
+    }
+  });
+
+  return job;
+}
+
+/**
+ * Verifikasi API key kustom (b.ai `sk-…`, tokenharbor `thk_…`) via inferensi
+ * nyata — persis `check_key_quota_live` di kedua skrip.
+ *
+ * Mengirim chat minimal ("say ok", max_tokens kecil, timeout 30 dtk) langsung
+ * ke `baseUrl` provider dengan key itu. Hasilnya tiga keadaan, sama seperti
+ * skrip: ACTIVE (200/valid JSON) → `healthy`; 401/invalid → `invalid`;
+ * 402/insufficient/credit/balance/quota → `depleted`; 429 → `rate_limited`;
+ * sisanya `unknown` (tidak pernah dihapus).
+ *
+ * Berbeda dari "Tes koneksi" (yang memanggil baseUrl/models): endpoint models
+ * hanya membuktikan key dikenal, bukan bisa chat. Skrip memakai inferensi
+ * karena key b.ai/tokenharbor yang "dikenal tapi habis" lolos models tapi
+ * gagal chat — dan itulah yang perlu dibedakan.
+ */
+/**
+ * baseUrl bawaan untuk verify-key bila koneksi tidak menyimpannya.
+ *
+ * Koneksi dari skrip menyimpan `baseUrl` di `providerSpecificData`, tapi
+ * koneksi lama/tangan mungkin tidak. Tanpa fallback, tombol "Verifikasi key"
+ * akan melewati semua akunnya diam-diam (targets kosong) — lebih buruk
+ * daripada mencoba endpoint yang benar.
+ */
+const VERIFY_BASE_URL_FALLBACK = {
+  bai: "https://api.b.ai/v1",
+  tokenharbour: "https://tokenharbor.ai/v1",
+};
+
+export async function startKeyVerify({ connections, provider = null }) {
+  // Fallback node: baseUrl juga bisa hidup di node provider kustom (UUID),
+  // bukan di tiap koneksi. Dibaca sekali sebelum filter supaya koneksi tanpa
+  // baseUrl sendiri tetap ikut selama node-nya punya.
+  let nodeBaseByProvider = {};
+  try {
+    const { getProviderNodes } = await import("@/lib/localDb");
+    const nodes = await getProviderNodes().catch(() => []);
+    for (const n of nodes || []) {
+      if (n?.baseUrl) {
+        nodeBaseByProvider[n.id] = String(n.baseUrl).replace(/\/$/, "");
+        if (n.name) nodeBaseByProvider[n.name] = String(n.baseUrl).replace(/\/$/, "");
+      }
+    }
+  } catch { /* tanpa node pun fallback bawaan di bawah masih ada */ }
+
+  const resolveBaseUrl = (conn) => {
+    const own = conn?.providerSpecificData?.baseUrl;
+    if (own) return String(own).replace(/\/$/, "");
+    const nodeBase = nodeBaseByProvider[conn.provider];
+    if (nodeBase) return nodeBase;
+    const prefix = conn?.providerSpecificData?.prefix;
+    if (prefix === "bai") return VERIFY_BASE_URL_FALLBACK.bai;
+    if (prefix === "tokenharbor") return VERIFY_BASE_URL_FALLBACK.tokenharbour;
+    return null;
+  };
+
+  const targets = connections.filter((c) => {
+    if (provider && c.provider !== provider) return false;
+    const key = c.apiKey || c.accessToken;
+    return !!(resolveBaseUrl(c) && key);
+  });
+
+  const job = createJob({
+    kind: "verify",
+    label: provider ? `Verifikasi key ${provider}` : "Verifikasi key semua akun",
+    total: targets.length,
+    meta: { provider },
+  });
+
+  void runJob(
+    job,
+    targets,
+    async (conn) => {
+      const baseUrl = resolveBaseUrl(conn);
+      const key = conn.apiKey || conn.accessToken;
+      const label = providerLabel(conn);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30_000);
+      try {
+        const res = await fetch(`${baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+          body: JSON.stringify({
+            model: conn.defaultModel || "default",
+            messages: [{ role: "user", content: "say ok" }],
+            max_tokens: 5,
+            stream: false,
+          }),
+          signal: controller.signal,
+        });
+        const text = await res.text().catch(() => "");
+        let okJson = false;
+        try {
+          const d = JSON.parse(text);
+          okJson = !!(d?.choices || d?.data || d?.id);
+        } catch { /* bukan JSON = bukan jawaban chat yang sah */ }
+        const lower = text.toLowerCase();
+        if (res.ok && okJson) {
+          return {
+            ok: true, id: conn.id, name: conn.name, email: conn.email, provider: label,
+            state: "healthy", reason: "Key valid (inferensi OK)",
+          };
+        }
+        if (res.status === 401 || res.status === 403 || /invalid|unauthorized|forbidden|revoked/.test(lower)) {
+          return {
+            ok: true, id: conn.id, name: conn.name, email: conn.email, provider: label,
+            state: "invalid", reason: "Key ditolak (401/403)",
+          };
+        }
+        if (res.status === 402 || /insufficient|credit|balance|quota|spending.?limit|depleted/.test(lower)) {
+          return {
+            ok: true, id: conn.id, name: conn.name, email: conn.email, provider: label,
+            state: "depleted", reason: "Key habis (402/kuota)",
+          };
+        }
+        if (res.status === 429 || /rate.?limit|too many/.test(lower)) {
+          return {
+            ok: true, id: conn.id, name: conn.name, email: conn.email, provider: label,
+            state: "rate_limited", reason: "Kena laju sementara",
+          };
+        }
+        return {
+          ok: false, id: conn.id, name: conn.name, email: conn.email, provider: label,
+          error: `HTTP ${res.status}: ${text.slice(0, 120) || "respons tak dikenal"}`,
+        };
+      } catch (err) {
+        return {
+          ok: true, id: conn.id, name: conn.name, email: conn.email, provider: label,
+          state: "transient", reason: `Jaringan/timeout: ${err?.message || "gagal"}`,
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    { concurrency: 6 },
+  );
+
+  return job;
 }

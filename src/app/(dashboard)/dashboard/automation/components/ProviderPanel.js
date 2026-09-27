@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button, Input } from "@/shared/components";
 import JobRunner, { useJob } from "./JobRunner";
 import TestPrompt from "./TestPrompt";
+import ProviderOps from "./ProviderOps";
 
 /**
  * Menu fitur untuk SATU provider.
@@ -265,6 +266,20 @@ export default function ProviderPanel({ providerId, onBack }) {
         </div>
       </div>
 
+      {/* Operasi khas provider ala skrip terminalnya (kuota selektif, hapus
+          per grup/kategori, refresh, expiry, nonaktif, generator TXT). */}
+      <ProviderOps
+        providerId={providerId}
+        info={info}
+        rows={rows || []}
+        visible={visible}
+        scanResults={job.results || []}
+        running={running}
+        runOp={runOp}
+        onDelete={doDelete}
+        onChanged={() => setReloadKey((n) => n + 1)}
+      />
+
       {job.status !== "idle" ? <JobRunner job={job} /> : null}
 
       {!running && kandidat.length > 0 ? (
@@ -453,6 +468,7 @@ function ImportRow({ providerId, info, onDone }) {
     freebuff: "email:accessToken",
     bai: "email:sk-...",
     tokenharbour: "email:thk_...",
+    kiro: "email:refreshToken",
   }[providerId] || "email:token";
 
   const submit = async () => {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireGate } from "@/lib/automation/gate";
 import { getProviderConnections, createProviderConnection, updateProviderConnection } from "@/lib/localDb";
 import { getCatalogueEntry, resolveProviderId, matchCatalogueEntry } from "@/lib/automation/catalogue";
+import { KiroService } from "@/lib/oauth/services/kiro";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,8 @@ const NO_STORE = { "Cache-Control": "no-store, must-revalidate" };
  *   freebuff     email:accessToken
  *   bai          email:sk-...
  *   tokenharbour email:thk_...[:expireHours]
+ *   kiro         email:refreshToken        (refreshToken diawali `aorAAAAAG`;
+ *                                          tervalidasi via refresh sebelum simpan)
  *
  * ── Tiga hal yang membedakan ini dari versi Python ──────────────────────────
  *
@@ -75,6 +78,10 @@ export const POST = requireGate(async (request) => {
   let skipped = 0;
   let failed = 0;
 
+  // Kiro: satu service untuk seluruh batch — validateImportToken me-refresh
+  // tiap token ke AWS untuk memastikan ia hidup SEBELUM disimpan.
+  const kiroSvc = entry.id === "kiro" ? new KiroService() : null;
+
   for (let i = 0; i < lines.length; i++) {
     const raw = String(lines[i]).trim();
     if (!raw || raw.startsWith("#")) continue;
@@ -87,7 +94,7 @@ export const POST = requireGate(async (request) => {
         continue;
       }
 
-      const credential = parsed.apiKey || parsed.accessToken;
+      let credential = parsed.apiKey || parsed.accessToken || parsed.refreshToken;
       if (!credential) {
         failed++;
         results.push({ index: i, ok: false, error: "Kredensial kosong" });
@@ -100,6 +107,32 @@ export const POST = requireGate(async (request) => {
         continue;
       }
 
+      // Kiro: validasi refreshToken via refresh ke AWS SEBELUM simpan —
+      // persis seperti skrip (token mati ditolak saat impor, bukan sesudahnya).
+      // Hasil validasi (accessToken segar + profileArn) ikut disimpan.
+      let kiroExtra = null;
+      if (entry.id === "kiro" && kiroSvc) {
+        try {
+          const v = await kiroSvc.validateImportToken(String(parsed.refreshToken));
+          parsed.accessToken = v.accessToken;
+          if (v.refreshToken) parsed.refreshToken = v.refreshToken;
+          if (v.expiresIn) {
+            parsed.expiresAt = new Date(Date.now() + Number(v.expiresIn) * 1000).toISOString();
+          }
+          kiroExtra = { profileArn: v.profileArn || null, authMethod: v.authMethod || "imported" };
+          credential = parsed.refreshToken;
+          if (seen.has(credential)) {
+            skipped++;
+            results.push({ index: i, ok: true, skipped: true, reason: "Sudah ada" });
+            continue;
+          }
+        } catch (e) {
+          failed++;
+          results.push({ index: i, ok: false, error: e?.message || "Token Kiro tidak valid" });
+          continue;
+        }
+      }
+
       const prior = parsed.email ? byEmail.get(parsed.email.toLowerCase()) : null;
       const payload = {
         provider: pid,
@@ -110,6 +143,7 @@ export const POST = requireGate(async (request) => {
           prefix: entry.id === "bai" ? "bai" : entry.id === "tokenharbour" ? "tokenharbor" : undefined,
           nodeName: entry.label,
           apiType: "chat",
+          ...(kiroExtra || {}),
         },
       };
 
@@ -162,6 +196,15 @@ function parseLine(entry, line) {
     const [accessToken, refreshToken] = rest;
     if (!accessToken) return null;
     return { email, accessToken, refreshToken: refreshToken || null };
+  }
+
+  if (entry.id === "kiro") {
+    // email:refreshToken — refreshToken diawali `aorAAAAAG` (format skrip
+    // add-account-kiro-9router.py). Validasinya lewat refresh di bawah
+    // (validateKiroLine), BUKAN di sini — parser hanya memecah bentuk.
+    const token = rest.find((v) => v.length > 10) || rest[0];
+    if (!token) return null;
+    return { email, refreshToken: token };
   }
 
   if (entry.accountKind === "apikey") {

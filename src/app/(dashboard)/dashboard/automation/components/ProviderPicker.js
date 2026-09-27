@@ -58,7 +58,7 @@ export default function ProviderPicker({ onPick }) {
       <div className="flex flex-col gap-1">
         <h2 className="text-sm font-medium text-text-main">Pilih provider</h2>
         <p className="text-xs text-text-muted">
-          {total} akun di enam provider. Membuka salah satu akan menampilkan fitur yang
+          {total} akun di {providers.length} provider. Membuka salah satu akan menampilkan fitur yang
           tersedia untuknya.
         </p>
       </div>

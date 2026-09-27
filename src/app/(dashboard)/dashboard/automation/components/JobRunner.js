@@ -140,7 +140,14 @@ export function useJob() {
   return { ...state, watch, cancel, reset };
 }
 
-const KIND_LABEL = { quota: "Cek kuota", test: "Test koneksi", delete: "Hapus akun" };
+const KIND_LABEL = {
+  quota: "Cek kuota",
+  test: "Test koneksi",
+  delete: "Hapus akun",
+  refresh: "Refresh token",
+  verify: "Verifikasi key",
+  deactivate: "Nonaktifkan akun",
+};
 
 export default function JobRunner({ job }) {
   if (!job || job.status === "idle") return null;
