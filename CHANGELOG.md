@@ -1,3 +1,50 @@
+# v0.5.119 (2026-09-27) — 9router-imagefix
+
+## Features
+- **Menu Automation** (`/dashboard/automation`) — menambah akun provider dari web,
+  menggantikan kebutuhan menjalankan skrip Python dari terminal.
+
+  Tiga bagian: **Tambah via OAuth** (alur device-code dipandu di satu layar:
+  pilih provider → kode tampil → salin → setujui di browser → token tersimpan),
+  **Bulk import** (tempel JSON atau pilih berkas; akun kembar dilewati; hasil
+  per-baris), dan **Export** (JSON yang bisa diimpor ulang, atau TXT tab-separated
+  untuk dibaca skrip).
+
+  Sepuluh provider device-code: kiro, grok-cli, kilocode, kimi, codebuddy-cn,
+  codebuddy-intl, qoder, meta-code, github, freebuff.
+
+- **Gerbang password.** Halaman ini bisa menambah akun dan mengekspor token
+  akses penuh ke semuanya, jadi ia punya lapisan kedua di atas sesi dashboard.
+  Password dibandingkan dengan `timingSafeEqual`, cookie-nya HMAC terikat
+  `JWT_SECRET` (cookie dari mesin lain tidak berlaku), dan **setiap** route
+  automation dibungkus `requireGate` — dijaga di server, bukan disembunyikan di
+  tampilan. `AUTOMATION_PASSWORD` di `.env` menang atas nilai bawaan.
+
+  ⚠️ Password bawaan ditulis di `src/lib/automation/gate.js`. Repositori ini
+  di-push ke GitHub, jadi siapa pun yang bisa membacanya bisa membukanya.
+  Ganti lewat `AUTOMATION_PASSWORD` kalau repo ini pernah publik.
+
+## Fixes
+- **`Input` bersama: label tidak terasosiasi dengan kotaknya.** `<label>` tidak
+  punya `htmlFor`, sehingga mengklik label tidak memfokus input dan pembaca
+  layar tidak menyebut namanya. `id` dan `autoFocus` juga tidak diteruskan ke
+  `<input>`. Bug yang sudah ada sebelum pekerjaan ini, di komponen yang dipakai
+  seluruh dashboard.
+- **`useCopyToClipboard` mengembalikan ID, bukan boolean.** Pemakaian pertama
+  saya memeriksanya sebagai boolean, yang menampilkan "Tersalin" sejak render
+  pertama — sebelum apa pun pernah disalin.
+
+## Catatan
+- `src/lib/automation/deviceFlow.js` menyalin logika bercabang dari
+  `api/oauth/[provider]/[action]/route.js`, dan
+  `src/lib/automation/providers.js` menyalin daftar provider no-PKCE dari dua
+  tempat. Duplikasi disengaja: jalur Automation digerbangi password, jalur OAuth
+  tidak. `tests/unit/automation-device-flow.test.js` membandingkan ketiga sumber
+  dan gagal kalau menyimpang — tanpa penjaga itu, menambah provider di satu
+  tempat dan lupa di tempat lain menghasilkan kegagalan yang baru muncul setelah
+  operator susah payah menyetujui di browser.
+- Yang **tidak** dibangun: pembuatan akun massal dengan captcha solver.
+
 # v0.5.118 (2026-09-26) — 9router-imagefix
 
 ## Features

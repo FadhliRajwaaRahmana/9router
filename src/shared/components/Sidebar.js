@@ -27,6 +27,9 @@ const navItems = [
   { href: "/dashboard/token-saver", label: "Token Saver", icon: "savings" },
   // { href: "/dashboard/pxpipe", label: "PXPIPE", icon: "image" },
   { href: "/dashboard/cli-tools", label: "CLI Tools", icon: "terminal" },
+  // Digerbangi password sendiri (AUTOMATION_PASSWORD) — halaman ini bisa
+  // menambah akun dan mengekspor kredensialnya ke berkas.
+  { href: "/dashboard/automation", label: "Automation", icon: "smart_toy" },
 ];
 
 const debugItems = [
