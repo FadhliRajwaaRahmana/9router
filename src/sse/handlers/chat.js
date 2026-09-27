@@ -242,8 +242,23 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastError = null;
   let lastStatus = null;
 
+  // `x-connection-id` memaksa satu akun tertentu untuk request ini.
+  //
+  // Sudah dipakai jalur image/video; jalur chat belum punya padanannya, dan
+  // tanpa itu tidak ada cara menguji satu akun dari luar: permintaan akan
+  // dilayani akun mana pun yang dipilih rotasi, sehingga "akun ini sehat?"
+  // tidak bisa dijawab — yang terukur cuma "provider ini punya akun sehat".
+  //
+  // Akun yang dipin TETAP ikut aturan fallback: kalau ia gagal, `excludeSet`
+  // membuat pemilihan berikutnya jatuh ke akun lain. Membiarkannya memblokir
+  // seluruh permintaan akan membuat satu akun rusak tampak seperti provider
+  // yang mati.
+  const preferredConnectionId = request.headers.get("x-connection-id") || null;
+
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
+      preferredConnectionId,
+    });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {

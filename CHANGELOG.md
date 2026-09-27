@@ -1,3 +1,63 @@
+# v0.5.121 (2026-09-27) — 9router-imagefix
+
+## Features
+- **Menu Automation disusun ulang: pilih provider → menu fiturnya.** Mengikuti
+  bentuk dashboard-di-atas-menu pada skrip terminal. Enam provider sesuai enam
+  skrip, dan fitur yang ditawarkan hanya yang benar-benar dimiliki provider itu:
+
+  | Provider | Sumber | Kuota | Catatan |
+  |---|---|---|---|
+  | Antigravity | `add-account-ag-9router.py` | ✅ | kuota per grup model + reset time |
+  | B.AI | `add-account-bai-9router.py` | — | kuota lewat inferensi (tidak ada endpoint saldo) |
+  | Cline | `add-account-cline-oauth-9router.py` | — | token 1 jam, refresh ambang 300 detik |
+  | Grok CLI | `add-account-grok-9router.py` | ✅ | billing + deteksi `team_blocked` |
+  | TokenHarbor | `add-account-tokenharbor-9router.py` | — | punya masa berlaku akun |
+  | Freebuff | `add-freebuff-deviceflow-9router.py` | ✅ | satu akun satu model; login device |
+
+  `quota` tidak ditawarkan untuk provider yang 9Router belum punya handler-nya —
+  tombol yang selalu menjawab "belum ada" lebih buruk daripada tidak ada tombol.
+
+- **Generate TXT per provider**, bentuknya mengikuti skrip asalnya karena berkas
+  itu harus bisa dibaca kembali oleh skrip itu:
+  `antigravity`/`grok-cli` → `email:refreshToken` · `cline` →
+  `email:accessToken:refreshToken` · `freebuff` → `email:accessToken` ·
+  `bai` → `email:sk-...` · `tokenharbour` → `email:thk_...[:jam]`.
+
+- **Impor kredensial per provider.** Dedup yang benar dan penggabungan data
+  (lihat Fixes). Parser menerima `:` `|` `=` `,` dan tab, karena berkas yang
+  beredar antar mesin datang dalam beberapa bentuk dan menolak salah satunya
+  berarti operator harus mengeditnya dulu.
+
+- **Tes prompt per akun.** Mengirim prompt nyata lewat gateway sendiri dengan
+  header `x-connection-id`, sehingga yang diuji benar-benar "apakah akun ini
+  bisa melayani request" — melewati jalur yang sama dengan trafik sungguhan,
+  termasuk refresh token dan proxy. Balasan ditampilkan utuh (skrip `bai`
+  memotongnya di 50 karakter).
+
+## Fixes
+- **Password diminta berulang setiap kali halaman dibuka.** `page.js` selalu
+  mulai dengan `unlocked = false` dan tidak pernah memeriksa cookie yang sudah
+  sah; karena setiap perpindahan tab di dashboard adalah navigasi sungguhan,
+  operator diminta mengetik ulang setiap kali kembali. → status gerbang
+  DIPERIKSA lewat `GET /api/automation/gate` saat halaman dimuat.
+
+- **Dua bug impor yang tidak ditiru dari skrip sumber:**
+  `tokenharbor` membandingkan `row[2]` untuk dedup padahal itu kolom `name`
+  (`json.loads("bkd1 #1")` selalu gagal) sehingga setiap impor menambah baris
+  baru; dan `cline` menulis seluruh kolom `data` dengan payload baru sehingga
+  `lastUsedAt` / `consecutiveUseCount` / `modelLock_*` milik 9Router hilang.
+  Di sini dedup memakai nilai kredensial, dan pembaruan memakai
+  `updateProviderConnection` yang menggabung.
+
+- **`x-connection-id` diterima di jalur chat.** Header itu sudah dipakai jalur
+  image/video tapi belum chat, sehingga tidak ada cara menguji satu akun:
+  permintaan selalu dilayani akun mana pun yang dipilih rotasi.
+
+## Removed
+- `src/app/api/automation/bulk-import/` dan dua komponen yang jadi kode mati
+  (`AccountsSection.js`, `BulkImportSection.js`) — digantikan impor per provider
+  yang menulis langsung ke daftar akun provider itu.
+
 # v0.5.120 (2026-09-27) — 9router-imagefix
 
 ## Features

@@ -20,9 +20,9 @@
  * Tes ini membandingkan ketiga sumber, bukan menguji satu per satu.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(here, "../..");
@@ -117,22 +117,42 @@ describe("automation — gerbang password", () => {
   it("setiap route automation dibungkus requireGate", () => {
     // Route baru yang ditambahkan tanpa gerbang adalah cara paling mudah
     // membuat gerbang ini tidak berguna. Tes ini gagal kalau ada yang lupa.
-    const routes = [
-      "src/app/api/automation/providers/route.js",
-      "src/app/api/automation/device/start/route.js",
-      "src/app/api/automation/device/poll/route.js",
-      "src/app/api/automation/bulk-import/route.js",
-      "src/app/api/automation/export/route.js",
-    ];
+    //
+    // Daftarnya DIBACA dari disk, bukan ditulis tangan: daftar yang ditulis
+    // tangan akan diam-diam ketinggalan setiap kali route baru ditambahkan —
+    // dan justru route baru itulah yang paling mungkin lupa dibungkus.
+    const automationDir = resolve(REPO, "src/app/api/automation");
+    const routes = [];
+    (function walk(dir) {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (e.name === "route.js") routes.push(full);
+      }
+    })(automationDir);
+
+    expect(routes.length, "tidak ada route automation yang ditemukan").toBeGreaterThan(3);
+
+    /**
+     * Route yang MEMBUKA gerbang, bukan yang dijaganya.
+     *
+     * `gate/route.js` harus bisa diakses justru saat gerbang masih tertutup —
+     * membungkusnya dengan `requireGate` membuatnya mustahil dibuka sama sekali.
+     * Ia tetap punya pengamannya sendiri: password dibandingkan dengan
+     * `timingSafeEqual` (lihat tes di bawah).
+     */
+    const PEMBUKA_GERBANG = new Set(["gate/route.js"]);
 
     for (const r of routes) {
-      const src = read(r);
-      expect(src, `${r} tidak mengimpor requireGate`).toContain("requireGate");
-      // Handler harus DIBUNGKUS, bukan sekadar dipanggil di dalam badan.
+      const rel = r.replace(REPO, "").replace(/\\/g, "/").replace(/^\//, "");
+      if ([...PEMBUKA_GERBANG].some((x) => rel.endsWith(x))) continue;
+
+      const src = readFileSync(r, "utf8");
+      expect(src, `${rel} tidak mengimpor requireGate`).toContain("requireGate");
       const exported = src.match(/export const (GET|POST|DELETE|PUT)\s*=\s*([^\n]+)/g) || [];
-      expect(exported.length, `${r} tidak mengekspor handler`).toBeGreaterThan(0);
+      expect(exported.length, `${rel} tidak mengekspor handler`).toBeGreaterThan(0);
       for (const line of exported) {
-        expect(line, `handler di ${r} tidak dibungkus requireGate: ${line}`).toContain("requireGate");
+        expect(line, `handler di ${rel} tidak dibungkus requireGate: ${line}`).toContain("requireGate");
       }
     }
   });

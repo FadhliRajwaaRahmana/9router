@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireGate } from "@/lib/automation/gate";
 import { getProviderConnections } from "@/lib/localDb";
 import { classifyConnectionError, effectiveStatus } from "@/lib/automation/operations";
+import { getCatalogueEntry, resolveProviderId, matchCatalogueEntry } from "@/lib/automation/catalogue";
 
 export const dynamic = "force-dynamic";
 
@@ -29,10 +30,27 @@ const NO_STORE = { "Cache-Control": "no-store, must-revalidate" };
 export const GET = requireGate(async (request) => {
   const url = new URL(request.url);
   const provider = url.searchParams.get("provider");
+  const catalogueId = url.searchParams.get("catalogueId");
   const query = (url.searchParams.get("q") || "").trim().toLowerCase();
   const state = url.searchParams.get("state"); // active | inactive | error
 
-  let connections = await getProviderConnections(provider ? { provider } : {});
+  let connections = provider ? await getProviderConnections({ provider }) : await getProviderConnections({});
+
+  // `catalogueId` menyaring lewat entri katalog, bukan lewat id provider.
+  //
+  // Alasannya: `b.ai` dan `tokenharbour` adalah provider kustom ber-id UUID
+  // yang berbeda di tiap mesin. Memfilter dengan id dari skrip akan kosong di
+  // mesin yang membuat providernya dengan id lain. Katalog tahu cara
+  // mencocokkannya (id ATAU prefix), jadi penyaringan dilakukan lewat katalog.
+  if (catalogueId) {
+    const entry = getCatalogueEntry(catalogueId);
+    if (!entry) {
+      return NextResponse.json({ error: "Provider tidak dikenal" }, { status: 400, headers: NO_STORE });
+    }
+    const pid = resolveProviderId(entry);
+    const all = await getProviderConnections({});
+    connections = all.filter((c) => c.provider === pid || matchCatalogueEntry(c)?.id === entry.id);
+  }
 
   if (query) {
     connections = connections.filter((c) =>
