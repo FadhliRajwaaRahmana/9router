@@ -1,3 +1,31 @@
+# v0.5.122 (2026-09-27) — 9router-imagefix
+
+## Features
+- **Automation: fitur tiap provider dilengkapi sesuai skripnya.** Kiro masuk
+  katalog (kuota/test/prompt/impor/refresh) + impor bulk `email:refreshToken`
+  tervalidasi via refresh ke AWS sebelum disimpan. Kuota objek (`quotas{}`
+  ala kiro/grok/antigravity) ikut terbaca; grup AG (Gemini vs Claude & GPT,
+  termasuk baris mingguan) + total pool Kiro dibawa di hasil pindaian.
+
+  Operasi massal baru: refresh token tanpa login ulang (cline/kiro/grok/ag),
+  verifikasi key via inferensi nyata 401/402/429 (b.ai, tokenharbor),
+  nonaktifkan (cleanup expired tokenharbor), `ids` opsional di cek
+  kuota/tes untuk akun tertentu ("50", "1-10").
+
+  UI ProviderOps per provider: kuota selektif per nomor, hapus 0% per grup AG,
+  pool Kiro, bersih per kategori Cline MATI/LIMIT/ERROR/EXPIRED, hapus BLOCKED
+  + by-pattern Grok, expiry TokenHarbor (lihat/nonaktifkan/hapus), nonaktif
+  per domain + dry-run AG, generator TXT pembuat (client-side).
+
+  Dua yang disengaja TIDAK dibangun: login browser pakai `email:password`
+  (mesin credential stuffing + password massal di browser), dan hapus otomatis
+  saat pemindaian (setiap hapus pakai pratinjau + konfirmasi).
+
+## Tests
+- 16 test baru `tests/unit/automation-provider-ops.test.js` (kuota objek,
+  grup AG, hapus per grup, indeks selektif, kategori cline, expiry, nonaktif).
+  40/40 automation lolos; lint bersih; build OK.
+
 # v0.5.121 (2026-09-27) — 9router-imagefix
 
 ## Features
