@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { SegmentedControl } from "@/shared/components";
 import OAuthSection from "./OAuthSection";
+import AccountsSection from "./AccountsSection";
 import BulkImportSection from "./BulkImportSection";
 import ExportSection from "./ExportSection";
 
 const TABS = [
+  { value: "accounts", label: "Akun" },
   { value: "oauth", label: "Tambah via OAuth" },
   { value: "bulk", label: "Bulk import" },
   { value: "export", label: "Export" },
@@ -21,7 +23,9 @@ const TABS = [
  * ketiganya saling mengganggu.
  */
 export default function AutomationPanel({ onLock }) {
-  const [tab, setTab] = useState("oauth");
+  // "Akun" lebih dulu karena itu yang paling sering dibutuhkan: menambah akun
+  // terjadi sekali, memeriksa dan membersihkannya terjadi terus-menerus.
+  const [tab, setTab] = useState("accounts");
   const [locked, setLocked] = useState(false);
 
   const lockNow = async () => {
@@ -57,6 +61,7 @@ export default function AutomationPanel({ onLock }) {
 
       <SegmentedControl options={TABS} value={tab} onChange={setTab} className="w-full sm:w-auto" />
 
+      {tab === "accounts" ? <AccountsSection /> : null}
       {tab === "oauth" ? <OAuthSection /> : null}
       {tab === "bulk" ? <BulkImportSection /> : null}
       {tab === "export" ? <ExportSection /> : null}

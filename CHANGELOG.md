@@ -1,3 +1,64 @@
+# v0.5.120 (2026-09-27) — 9router-imagefix
+
+## Features
+- **Menu Automation jadi lengkap: kelola akun, bukan cuma tambah.** Tab "Akun"
+  baru menggabungkan bagian List / Test / Cek kuota / Hapus dari keenam skrip
+  terminal, dengan pemindaian latar dan kemajuan yang terlihat.
+
+  - **Cek kuota massal** — memanggil `GET /api/usage/{id}` milik 9Router sendiri,
+    bukan menyalin logika tiap skrip. Hasilnya lebih baik daripada versi Python:
+    `resetAt` ikut terbawa (skrip `ag` membuangnya), dan daftar modelnya lebih
+    lengkap.
+  - **Test koneksi massal** — memakai `POST /api/providers/{id}/test` yang sudah
+    menangani 18 provider termasuk refresh token dan proxy.
+  - **Saring & cari** per provider, status, atau teks; pilih banyak akun; hapus.
+  - **Pekerjaan latar dengan kemajuan, pembatalan, dan pemulihan.** `id` job
+    disimpan di `localStorage`, jadi me-refresh halaman menyambung kembali ke
+    pemindaian yang masih berjalan alih-alih kehilangannya.
+
+## Fixes
+- **146 dari 156 akun terukur punya `lastError` yang BUKAN masalah akun.**
+  Semuanya `400 invalid-argument: [input_too_large] The prompt is too long for
+  this model's context window` — masalah panjang prompt, dan akan hilang sendiri
+  pada request berikutnya. Menandai akun bermasalah hanya karena `lastError` ada
+  isinya akan melaporkan 146 akun sehat sebagai rusak. → klasifikasi berdasarkan
+  MAKNA: hanya 401/403 (kredensial mati) dan 402/kuota habis yang bermakna;
+  `input_too_large`, 429, dan gangguan jaringan tidak.
+
+- **`testStatus: "unavailable"` menyesatkan kalau ditampilkan apa adanya.**
+  Terukur: 146/156 akun `unavailable` padahal semua `isActive`. Nilai itu ditulis
+  jalur fallback runtime saat satu request gagal, bersama `modelLock_<model>`;
+  setelah cooldown lewat akun itu aktif kembali. → status efektif dihitung dari
+  cooldown, mengikuti aturan yang sudah dipakai `ConnectionsCard.js`.
+
+- **Kuota yang tidak terbaca tidak lagi bisa berarti "habis".** Skrip `ag`
+  memakai ambang `pct < 1` tanpa mengecualikan sentinel `-1` ("N/A"), dan
+  `-1 < 1` bernilai benar — akun yang kuotanya gagal dibaca ikut terhapus.
+  → "tidak terbaca" adalah keadaan tersendiri dan tidak pernah memicu
+  penghapusan.
+
+- **Memindai dan menghapus adalah dua tindakan terpisah.** Skrip `ag` menghapus
+  DI DALAM pemindaian; skrip `bai` memakai `not ok` mentah sehingga akun sehat
+  yang sekadar gagal jaringan ikut terhapus; skrip `tokenharbor` menawarkan hapus
+  semua akun karena bergantung pada `lastError` yang di-set 9Router. Di sini
+  pemindaian hanya MENGISI daftar usulan, dan operator yang menekan tombol hapus
+  setelah melihat siapa saja yang masuk.
+
+- **Token tidak pernah dikirim ke browser.** Tab Export tetap punya peringatannya
+  sendiri, tapi daftar akun hanya memuat penanda dan awalan 6 karakter. Skrip
+  `tokenharbor` mencetak 25 karakter pertama API key ke layar.
+
+## Catatan
+- Tiga bug lain di skrip sumber ditemukan dan **tidak** ditiru: `cline`
+  meng-overwrite seluruh kolom `data` sehingga menghapus `lastUsedAt` /
+  `consecutiveUseCount` / `modelLock_*` milik 9Router; `tokenharbor` membaca
+  kolom yang salah saat dedup (`row[2]` adalah `name`, bukan `data`) sehingga
+  selalu menyisipkan baris baru; dan export TXT `cline` tidak bisa diimpor balik
+  karena formatnya berbeda dari parser impornya.
+- `tests/unit/automation-classification.test.js` memaku aturan klasifikasi —
+  khususnya bahwa `input_too_large` dan kuota-tak-terbaca tidak pernah masuk
+  daftar hapus.
+
 # v0.5.119 (2026-09-27) — 9router-imagefix
 
 ## Features
