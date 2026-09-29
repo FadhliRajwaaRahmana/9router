@@ -1,10 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Card from "@/shared/components/Card";
 import StackHead from "./StackHead";
 import LivePanel from "./LivePanel";
+
+import ActivityHeatmap from "./ActivityHeatmap";
+import { buildProviderColors, providerCss, providerChipBg } from "./providerColor";
 import Layer, { LayerRow } from "./Layer";
 import FilterBar from "./FilterBar";
 import FlowChart from "./FlowChart";
@@ -127,6 +130,77 @@ export default function UsageStack({ period, stats, live = null, loading, onRetr
   // yang dipilih operator. Diambil dari `format.js` supaya kepala, lapis, dan
   // strip tidak pernah memakai basis yang berbeda.
   const valueOf = useCallback((row) => valueOfMode(row, mode), [mode]);
+
+  /**
+   * Peta warna identitas provider.
+   *
+   * Dihitung dari SELURUH provider yang ada di stats, bukan hanya yang terlihat
+   * setelah disaring: warna "b.ai" harus sama apakah ia sedang tampil sendirian
+   * atau bersama 40 provider lain. Kalau warnanya dihitung dari yang terlihat,
+   * menyaring halaman akan mengubah warna — dan penanda yang berubah saat
+   * dipakai tidak berguna sebagai penanda.
+   *
+   * Nama node dipakai sebagai kunci kalau ada, karena itulah yang dibaca
+   * operator ("b.ai"), sementara id mentahnya adalah UUID yang tidak berarti.
+   */
+  const colorMap = useMemo(() => {
+    const ids = Object.keys(stats?.byProvider || {}).map(
+      (id) => nodeNames?.[id] || id,
+    );
+    return buildProviderColors(ids);
+  }, [stats, nodeNames]);
+
+  /** Baris komposisi provider untuk donut di kepala. Satu sumber untuk
+      donut dan strip proporsi, supaya keduanya tidak pernah berbeda angka. */
+  const donutRows = useMemo(() => {
+    if (!stats) return null;
+    return Object.entries(stats.byProvider || {}).map(([id, d]) => ({
+      id: nodeNames?.[id] || id,
+      rawId: id,
+      cost: d?.cost || 0,
+      tokens: (d?.promptTokens || 0) + (d?.completionTokens || 0),
+      requests: d?.requests || 0,
+    }));
+  }, [stats, nodeNames]);
+
+  const colorOf = useCallback(
+    (id, tone = "solid") => {
+      const label = nodeNames?.[id] || id;
+      return providerCss(colorMap.get(label)?.hue ?? null, { tone });
+    },
+    [colorMap, nodeNames],
+  );
+
+  /**
+   * Titik harian untuk kalender aktivitas.
+   *
+   * Diambil di sini, bukan di dalam ActivityHeatmap, supaya periodenya dijaga
+   * dengan cara yang sama seperti stats: `pointsPeriod` disimpan bersama
+   * datanya, dan render hanya menerima saat keduanya cocok. Kalender yang
+   * menampilkan hari-hari periode lama di bawah label periode baru persis
+   * kesalahan yang dijaga seluruh berkas ini — dan pada kalender justru lebih
+   * mudah lolos, karena bentuknya tidak berubah saat isinya berganti.
+   */
+  const [points, setPoints] = useState([]);
+  const [pointsPeriod, setPointsPeriod] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/usage/chart?period=${encodeURIComponent(period)}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !Array.isArray(d)) return;
+        setPoints(d);
+        setPointsPeriod(period);
+      })
+      .catch(() => {
+        // Kalender bukan bagian yang menjawab pertanyaan utama halaman ini;
+        // gagal memuatnya tidak boleh menjatuhkan seluruh tumpukan.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [period]);
 
   // Semua lapis dinormalisasi sekali, lalu disaring berlapis-lapis. Dihitung
   // sebagai satu useMemo supaya pencarian dan saringan tidak menelusuri peta
@@ -305,6 +379,9 @@ export default function UsageStack({ period, stats, live = null, loading, onRetr
         onSelectProvider={setProvider}
         selectedProvider={providerFilter}
         nodeNames={nodeNames}
+        colorOf={colorOf}
+        donutRows={donutRows}
+        onPickProvider={(row) => setProvider(row.rawId)}
       />
 
       {/* Live — request berjalan (model/provider/token/elapsed) + terakhir
@@ -312,6 +389,17 @@ export default function UsageStack({ period, stats, live = null, loading, onRetr
           `liveStats` mengutamakan state live (selalu segar via SSE) dan hanya
           jatuh ke angka periode saat state live belum terisi. */}
       <LivePanel stats={liveStats} nodeNames={nodeNames} />
+
+      {/* Donut + kalender berdampingan.
+          Keduanya menjawab pertanyaan yang berbeda dan saling melengkapi:
+          donut menjawab "ke MANA pemakaian pergi" (per provider), kalender
+          menjawab "KAPAN pemakaian terjadi" (per hari). Menumpuknya vertikal
+          akan memaksa menggulir untuk membandingkan keduanya. */}
+      {/* Kalender aktivitas — "KAPAN pemakaian terjadi". Donut yang menjawab
+          "ke MANA" sudah pindah ke kepala, karena di situlah ruangnya. */}
+      {stats ? (
+        <ActivityHeatmap points={pointsPeriod === period ? points : []} mode={mode} />
+      ) : null}
 
       {/* Chart — satu seri, dengan brush dan ringkasan rentang terpilih. */}
       <FlowChart period={period} mode={mode} />

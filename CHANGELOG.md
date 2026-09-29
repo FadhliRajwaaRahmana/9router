@@ -1,3 +1,61 @@
+# v0.5.124 (2026-09-29) — 9router-imagefix
+
+## Features
+- **Halaman Usage: warna identitas per provider.** Sebelumnya SEMUA warna berasal dari satu
+  oranye dengan opasitas berbeda: peringkat 0 oranye penuh, 1 oranye 62%, 2 oranye 34%, dan
+  **peringkat 3+ semuanya `--color-border` (abu-abu)**. Itu bekerja untuk tiga provider dan
+  gagal total untuk empat puluh — di database nyata ada 40+ provider, sehingga hampir semuanya
+  berwarna sama dan legenda berisi sederet titik kelabu yang tidak bisa dibedakan.
+
+  Sekarang hue tiap provider dihitung dari hash FNV-1a atas namanya, lalu ditempatkan dengan
+  sudut emas (137,508°) sampai jaraknya cukup dari warna yang sudah ditempatkan. Hash saja
+  tidak cukup: dengan 40 provider di ruang 360°, peluang tabrakan mendekati pasti. Terukur
+  pada 23 provider nyata — jarak minimum **9,95°** terhadap jarak ideal 15,65°, dan warna
+  keluar terurut mengelilingi roda warna (20° → 353°). Versi pertama algoritmanya menghasilkan
+  dua provider berjarak **0,1°** (praktis identik); tes menangkapnya dan penyebabnya diperbaiki,
+  bukan toleransinya dilonggarkan.
+
+  Warna dihitung dari SELURUH provider di stats, bukan yang terlihat setelah disaring —
+  kalau tidak, menyaring halaman akan mengubah warna, dan penanda yang berubah saat dipakai
+  tidak berguna sebagai penanda.
+
+- **Donut komposisi provider** di dalam blok kepala. SVG murni, bukan pustaka chart: yang
+  dibutuhkan hanya satu lingkaran berpotong (~40 baris SVG terhadap ~15KB bundel untuk fitur
+  yang tidak dipakai). Delapan teratas digambar, sisanya satu potongan netral berlabel
+  "N provider lainnya" yang bisa dibuka; pusat donut menampilkan total atau nilai potongan
+  yang sedang disorot; klik potongan menyaring halaman.
+
+- **Kalender aktivitas** — satu kotak per hari, lima tingkat intensitas **relatif terhadap hari
+  terberat**, bukan ambang tetap: ambang tetap salah begitu besaran pemakaian berubah (periode
+  sepi jadi seluruhnya pucat, periode ramai jadi seluruhnya gelap). Hari tanpa pemakaian dapat
+  tingkat tersendiri sehingga tidak pernah terbaca sebagai "aktivitas sedikit".
+
+- **Batang proporsi menampilkan SEMUA provider**, tidak lagi "tiga teratas + N others".
+  Dengan 40 provider, versi lama berarti 37 di antaranya tidak punya identitas di kepala
+  halaman — padahal justru di situ pertanyaan "ke mana pemakaian pergi" dijawab.
+
+## Fixes
+- **55% blok kepala terbuang.** Terukur pada lebar 1152px: angka utama (141px) dan kalimat
+  pendamping (158px) hanya memakai ~470px dari 1062px, sisanya kosong di kanan. Disusun
+  vertikal (keduanya kini mulai di `x=328`, sebelumnya `x=328` vs `x=489`) dan donut mengisi
+  ruang yang tersisa.
+
+- **Kode mati dibuang** dari `StackHead.js`: blok "N others yang bisa dibuka" beserta state
+  `restOpen` dan `restMembers` tidak lagi punya dasar setelah proporsi menampilkan semua
+  provider.
+
+## Catatan
+- **Heatmap hari × jam tidak dibangun**: `/api/usage/chart` sudah menjumlahkan per jam menjadi
+  satu angka dan `usageDaily` menyimpan agregat per hari. Membuatnya berarti menambah query
+  yang memindai `usageHistory` setiap kali halaman dibuka. Yang tersedia adalah versi per-hari,
+  dan itu dinyatakan di layar alih-alih ditebak.
+- `DESIGN.md` diperbarui: **"The One Accent Rule" diganti** menjadi empat aturan baru
+  (Hashed-Hue, Marker-Not-Text, Stable-Color, dan pemisahan aksen-tindakan vs
+  warna-identitas), karena aturan lama melarang persis apa yang sekarang dibutuhkan.
+- `tests/unit/usage-provider-color.test.js` (13 tes) memaku tiga sifat yang mudah rusak tanpa
+  terlihat: warna harus **stabil** (provider sama → warna sama), **terpisah** (tidak ada
+  pasangan nyaris identik), dan **tidak mengocok ulang** warna lain saat provider ditambah.
+
 # v0.5.123 (2026-09-27) — 9router-imagefix
 
 ## Features

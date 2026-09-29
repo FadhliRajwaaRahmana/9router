@@ -11,6 +11,7 @@ import {
   VALUE_MODES,
   PERIOD_LABELS,
 } from "./format";
+import ProviderDonut from "./ProviderDonut";
 
 /**
  * Kepala tumpukan — lapis teratas halaman.
@@ -56,10 +57,12 @@ export default function StackHead({
   onSelectProvider,   // klik segmen batang → saring seluruh halaman
   selectedProvider,
   nodeNames = {},     // id node kustom → nama yang bisa dibaca manusia
+  colorOf,            // (providerId, tone) → warna identitas provider
+  donutRows = null,   // baris komposisi {id, rawId, cost, tokens, requests}
+  onPickProvider,     // klik potongan donut → saring halaman
 }) {
   // Semua hook di atas: tidak boleh ada early return atau hook bersyarat di
   // atas sini, karena urutan hook harus sama di setiap render.
-  const [restOpen, setRestOpen] = useState(false);
 
   // Basis peringkat untuk mode ini. Di mode "both" ini berarti biaya; lihat
   // catatan di format.js soal kenapa bukan gabungan keduanya.
@@ -104,14 +107,17 @@ export default function StackHead({
     };
   }, [stats, ranksByTokens]);
 
-  // Tiga provider teratas dapat warna; sisanya satu warna netral. Dipisah
-  // supaya batang tetap terbaca saat providernya banyak — 12 warna berbeda
-  // pada batang setipis ini tidak bisa dibedakan siapa pun.
+  // ── Proporsi: SEMUA provider, bukan tiga teratas + "others" ────────────────
   //
-  // Pembedanya adalah OPASITAS dari satu hue, bukan campuran dengan warna teks.
-  // Mencampur oranye dengan `text-main` menghasilkan cokelat keruh yang terbaca
-  // sebagai "oranye kotor", bukan sebagai kategori berbeda — dan di mode gelap
-  // campuran itu justru makin gelap sehingga dua segmen nyaris sama.
+  // Versi sebelumnya hanya menampilkan tiga provider teratas dan menggabung
+  // sisanya menjadi satu segmen "N others". Dengan 40 provider, itu berarti 37
+  // di antaranya tidak punya identitas apa pun di kepala halaman — padahal
+  // justru di situ pertanyaan "ke mana pemakaian pergi" dijawab.
+  //
+  // Sekarang setiap provider yang punya aktivitas mendapat segmennya sendiri,
+  // dengan warna identitasnya. Segmen kecil tetap bisa dibaca karena `flex-grow`
+  // membagi ruang sisa setelah `min-width` dipenuhi, dan legenda di bawahnya
+  // menyebut semuanya.
   const segments = useMemo(() => {
     // Dasar proporsi sama dengan dasar peringkat: satu besaran per mode,
     // dipilih di satu tempat (`ranksByTokens`). Strip yang dihitung dari biaya
@@ -124,65 +130,39 @@ export default function StackHead({
     // menyembunyikannya membuat strip berbohong tentang ke mana trafik pergi.
     // Yang dibuang hanya provider yang memang tidak punya aktivitas sama sekali.
     const active = providers.filter((r) => basis(r) > 0 || r.requests > 0);
-    const top = active.slice(0, 3);
-    const rest = active.slice(3);
 
-    const segs = top.map((r) => ({
+    // Saat totalnya nol (semua trafik lewat provider gratis), tidak ada dasar
+    // perhitungan proporsi. Strip diganti keterangan jujur — bukan batang kosong
+    // yang bisa dibaca sebagai "tidak ada aktivitas".
+    return active.map((r) => ({
       id: r.id,
       label: providerLabel(r.id, nodeNames),
       value: basis(r),
       pct: share(basis(r), total),
       requests: r.requests,
-      rank: top.indexOf(r),
       // Nilai PENUH untuk atribut `title`/`aria-label`: segmen setipis ini
       // tidak mungkin memuat angka panjang, tapi angka itu harus tetap
       // terjangkau — singkatan yang hanya ada di tooltip masih menyembunyikan.
       full: ranksByTokens ? `${fmtFull(r.tokens)} tokens` : fmtCost(r.cost),
     }));
-
-    if (rest.length > 0) {
-      const restValue = rest.reduce((s, r) => s + basis(r), 0);
-      segs.push({
-        id: "__rest",
-        label: `${rest.length} others`,
-        value: restValue,
-        pct: share(restValue, total),
-        requests: rest.reduce((s, r) => s + r.requests, 0),
-        full: ranksByTokens ? `${fmtFull(restValue)} tokens` : fmtCost(restValue),
-        // Daftar nama yang tersembunyi di balik "others" — dipakai legenda
-        // supaya operator bisa membukanya, bukan hanya tahu ada yang disembunyikan.
-        members: rest.map((r) => ({
-          id: r.id,
-          label: providerLabel(r.id, nodeNames),
-          requests: r.requests,
-          pct: share(basis(r), total),
-        })),
-        rank: 3,
-      });
-    }
-
-    // Saat totalnya nol (semua trafik lewat provider gratis), tidak ada dasar
-    // perhitungan proporsi. Strip diganti keterangan jujur — bukan batang kosong
-    // yang bisa dibaca sebagai "tidak ada aktivitas".
-    return segs;
   }, [providers, ranksByTokens, total, nodeNames]);
 
   // Ada trafik, tapi tidak ada satu pun nilai biaya/token untuk dibandingkan.
   const noBasis = total <= 0 && providers.some((r) => r.requests > 0);
 
-  // Satu hue, empat tingkat kehadiran. `color-mix` dengan putih/transparan
-  // mempertahankan keluarga warna; mencampurnya dengan warna teks akan
-  // memindahkannya ke keluarga lain (oranye → cokelat).
-  const segColors = [
-    "var(--color-primary)",
-    "color-mix(in oklab, var(--color-primary) 62%, var(--color-surface))",
-    "color-mix(in oklab, var(--color-primary) 34%, var(--color-surface))",
-    "var(--color-border)",
-  ];
-
-  // Daftar provider yang tersembunyi di balik "N others" — bisa dibuka supaya
-  // "others" bukan jalan buntu.
-  const restMembers = segments.find((s) => s.id === "__rest")?.members || [];
+  // ── Warna segmen: identitas provider, bukan tingkat peringkat ──────────────
+  //
+  // Versi sebelumnya mewarnai segmen berdasarkan PERINGKAT: peringkat 0 oranye
+  // penuh, 1 oranye 62%, 2 oranye 34%, dan peringkat 3+ semuanya `--color-border`
+  // (abu-abu). Akibatnya dengan 40 provider, SEMUA provider selain tiga teratas
+  // berwarna sama — legenda berisi sederet titik kelabu yang tidak bisa
+  // dibedakan satu sama lain.
+  //
+  // Sekarang warnanya berasal dari ID provider (lihat providerColor.js), jadi
+  // "b.ai" selalu punya warnanya sendiri yang tidak dimiliki provider lain,
+  // di mana pun ia muncul: di strip proporsi, di donut, di legenda, dan di
+  // kepala lapis.
+  const segColor = (id) => colorOf(id, "solid");
 
   const hasData = total > 0 || requests > 0;
   const providerCounter = providers.filter((r) => r.requests > 0).length;
@@ -259,6 +239,23 @@ export default function StackHead({
         aggregate series, so there is no prior period to diff against.
       </p>
 
+      {/* Donut komposisi provider, di DALAM blok kepala.
+          Sebelumnya ia berdiri sendiri di bawah, dan blok kepala di atasnya
+          menyisakan lebih dari separuh lebarnya kosong — dua masalah yang
+          saling menyelesaikan: donut mengisi ruang itu, dan angka utama
+          mendapat konteks "ke mana perginya" tepat di sebelahnya.
+          Di layar sempit ia turun ke bawah angka, bukan berdesakan. */}
+      {donutRows && donutRows.length > 0 ? (
+        <div className="mt-5 border-t border-border-subtle pt-4">
+          <ProviderDonut
+            rows={donutRows}
+            mode={mode}
+            colorOf={colorOf}
+            onPick={onPickProvider}
+          />
+        </div>
+      ) : null}
+
       {/* Nilai utama — angka PENUH, tanpa singkatan.
           "16.0B" tidak bisa dicocokkan dengan catatan mana pun; "16,042,831,295"
           bisa. Di sini angkanya besar dan sendiri, jadi tidak ada alasan
@@ -268,7 +265,18 @@ export default function StackHead({
           "Cost + Tokens", dengan yang pertama adalah basis peringkat. Dua-duanya
           angka penuh — pasangan "7.1K / 16B" akan mengembalikan masalah yang
           sama di separuh baris. */}
-      <div className="mt-3 flex flex-wrap items-baseline gap-x-5 gap-y-2">
+      {/* Nilai utama disusun sebagai KOLOM yang rapat, bukan baris yang
+          menyebar.
+
+          Sebelumnya angka besar, angka pendamping, dan kalimat "spent · N
+          requests" berbaris horizontal dengan `flex-wrap`. Terukur pada lebar
+          1152px: ketiganya hanya memakai ~470px, menyisakan 55% blok kepala
+          benar-benar kosong di kanan — ruang yang tidak membawa informasi apa
+          pun sementara donut dan kalender di bawahnya harus berbagi lebar.
+
+          Menyusunnya vertikal membuat blok kepala memakai tinggi yang memang
+          disediakan grid, dan legenda donut bisa naik ke sebelahnya. */}
+      <div className="mt-3 flex flex-col items-start gap-1.5">
         {/* Angka besar mengikuti mode, dan labelnya ditulis HANYA saat mode
             gabungan. Di mode tunggal labelnya sudah ada di kalimat kecil di
             sebelah kanan ("spent…" / "tokens…"), jadi menaruhnya dua kali hanya
@@ -425,21 +433,20 @@ export default function StackHead({
           dalam sekali pandang, dan menjadi filter — klik segmen untuk menyaring
           seluruh halaman ke provider itu. */}
       {!noBasis && hasData && segments.length > 0 ? (
-        <>
+        <div className="mt-4">
           <div
-            className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-border-subtle"
+            className="flex h-2.5 w-full overflow-hidden rounded-full bg-border-subtle"
             role="group"
             aria-label="Proporsi pemakaian per provider"
           >
             {segments.map((s) => {
               const isSelected = selectedProvider === s.id;
-              const dimmed = selectedProvider && !isSelected && s.id !== "__rest";
+              const dimmed = selectedProvider && !isSelected;
               return (
                 <button
                   key={s.id}
                   type="button"
-                  onClick={() => s.id !== "__rest" && onSelectProvider?.(isSelected ? null : s.id)}
-                  disabled={s.id === "__rest"}
+                  onClick={() => onSelectProvider?.(isSelected ? null : s.id)}
                   // Angka PENUH di tooltip dan aria-label. Persentase saja tidak
                   // cukup: segmen setipis ini tidak mungkin memuat angka
                   // panjang, dan singkatan yang hanya hidup di tooltip masih
@@ -448,7 +455,7 @@ export default function StackHead({
                   aria-label={`${s.label}, ${fmtPercent(s.pct)} of total, ${s.full}`}
                   className={[
                     "h-full min-w-0 border-0 p-0 transition-opacity duration-200",
-                    s.id === "__rest" ? "cursor-default" : "cursor-pointer hover:opacity-80",
+                    "cursor-pointer hover:opacity-80",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70",
                     dimmed ? "opacity-25" : "opacity-100",
                   ].join(" ")}
@@ -461,8 +468,8 @@ export default function StackHead({
                     // jadi strip selalu pas dan segmen kecil tetap bisa diklik.
                     flexGrow: s.pct,
                     flexBasis: 0,
-                    minWidth: s.id === "__rest" ? "0" : "4px",
-                    backgroundColor: segColors[s.rank] || segColors[3],
+                    minWidth: "4px",
+                    backgroundColor: segColor(s.id),
                   }}
                 />
               );
@@ -478,18 +485,17 @@ export default function StackHead({
                 <button
                   key={s.id}
                   type="button"
-                  disabled={s.id === "__rest"}
                   onClick={() => onSelectProvider?.(isSelected ? null : s.id)}
                   className={[
                     "flex items-center gap-1.5 text-xs transition-colors duration-150",
-                    s.id === "__rest" ? "cursor-default" : "cursor-pointer",
+                    "cursor-pointer",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 rounded",
                     isSelected ? "text-text-main font-medium" : "text-text-muted hover:text-text-main",
                   ].join(" ")}
                 >
                   <span
                     className="size-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: segColors[s.rank] || segColors[3] }}
+                    style={{ backgroundColor: segColor(s.id) }}
                     aria-hidden="true"
                   />
                   <span className="max-w-[9rem] truncate">{s.label}</span>
@@ -504,67 +510,7 @@ export default function StackHead({
               );
             })}
           </div>
-
-          {/* Provider di balik "N others". Daftar ini bisa dibuka: tanpa itu,
-              "others" adalah jalan buntu — operator melihat jumlahnya tapi
-              tidak bisa menyaring ke salah satunya, padahal provider gratis
-              bisa melayani ratusan request dengan biaya $0 dan justru itu yang
-              perlu dilihat. */}
-          {restMembers.length > 0 ? (
-            <div className="mt-1.5">
-              <button
-                type="button"
-                onClick={() => setRestOpen((v) => !v)}
-                aria-expanded={restOpen}
-                className="flex items-center gap-1 rounded text-xs text-text-subtle transition-colors hover:text-text-main focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
-              >
-                <span
-                  className="material-symbols-outlined text-[14px] transition-transform duration-200"
-                  style={{ transform: restOpen ? "rotate(90deg)" : "none" }}
-                  aria-hidden="true"
-                >
-                  chevron_right
-                </span>
-                {restOpen ? "Hide" : "Show"} {restMembers.length} smaller provider
-                {restMembers.length === 1 ? "" : "s"}
-              </button>
-
-              {restOpen ? (
-                <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 pl-4">
-                  {restMembers.map((m) => {
-                    const isSelected = selectedProvider === m.id;
-                    return (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => onSelectProvider?.(isSelected ? null : m.id)}
-                        className={[
-                          "flex cursor-pointer items-center gap-1.5 rounded text-xs transition-colors duration-150",
-                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45",
-                          isSelected
-                            ? "font-medium text-text-main"
-                            : "text-text-muted hover:text-text-main",
-                        ].join(" ")}
-                      >
-                        <span
-                          className="size-1.5 shrink-0 rounded-full"
-                          style={{ backgroundColor: "var(--color-border)" }}
-                          aria-hidden="true"
-                        />
-                        <span className="max-w-[9rem] truncate">{m.label}</span>
-                        <span className="tabular-nums text-text-subtle">
-                          {m.pct === 0 && m.requests > 0
-                            ? `${fmtCount(m.requests)} req`
-                            : fmtPercent(m.pct)}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </>
+        </div>
       ) : null}
 
       {/* Provider yang baru saja gagal. Ditempatkan di kepala karena ini satu-
