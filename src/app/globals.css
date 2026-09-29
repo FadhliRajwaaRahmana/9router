@@ -457,6 +457,33 @@ button:disabled,
 }
 .value-fade { animation: valueFade 180ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 
+/* Hormati permintaan sistem untuk mengurangi gerak.
+ *
+ * Sebelum ini halaman Usage beranimasi tanpa jalan keluar: angka yang berjalan,
+ * kalender yang membesar saat disorot, chart yang menggambar ulang. Operator
+ * yang sudah mematikan animasi di sistemnya punya alasan — motion sickness,
+ * perangkat lemah, atau sekadar tidak tahan melihat angka bergerak sambil
+ * bekerja — dan halaman ini dipakai berjam-jam, bukan dilihat sekilas.
+ *
+ * Yang dimatikan hanya DURASI-nya, bukan perubahannya: transisi dan animasi
+ * tetap "berjalan" dengan durasi 0, sehingga keadaannya tetap sampai dan tidak
+ * ada layout yang bergantung pada selesainya sebuah animasi. Menghapus
+ * `transition` sama sekali juga sah, tapi durasi 0 lebih sulit salah.
+ *
+ * `scroll-behavior` ikut dimatikan karena halaman ini menggulir sendiri saat
+ * operator membuka lapis.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Teks yang hanya untuk pembaca layar. Dipakai halaman Usage supaya rincian
    token (input/cached/output) tidak perlu bergantung pada `title` — atribut itu
    tidak pernah muncul di perangkat sentuh dan tidak dijangkau keyboard. */

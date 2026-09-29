@@ -230,7 +230,19 @@ export default function FlowChart({ period, mode }) {
               />
 
               <Tooltip
-                cursor={{ stroke: "var(--color-border)", strokeWidth: 1 }}
+                // `isAnimationActive` + durasi pendek: tooltip Recharts muncul
+                // seketika, dan pada data yang bergerak itu terasa berkedip.
+                // 120ms cukup untuk terasa halus tanpa terasa lambat saat
+                // kursor digerakkan cepat melintasi chart.
+                isAnimationActive
+                animationDuration={120}
+                animationEasing="ease-out"
+                cursor={{
+                  stroke: "var(--color-border)",
+                  strokeWidth: 1,
+                  // Garis kursor ikut beranimasi, bukan melompat antar-titik.
+                  style: { transition: "transform 120ms cubic-bezier(.2,.8,.2,1)" },
+                }}
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null;
                   const v = payload[0]?.value || 0;
@@ -252,7 +264,13 @@ export default function FlowChart({ period, mode }) {
                 strokeWidth={2}
                 fill="url(#flowFill)"
                 dot={false}
-                activeDot={{ r: 3.5, strokeWidth: 0 }}
+                // Titik aktif tumbuh dari kecil; tanpa transisi, ia muncul
+                // seketika dan mata kehilangan jejak titik mana yang disorot.
+                activeDot={{
+                  r: 4,
+                  strokeWidth: 0,
+                  style: { transition: "r 120ms cubic-bezier(.2,.8,.2,1)" },
+                }}
                 isAnimationActive
                 animationDuration={400}
                 animationEasing="ease-out"

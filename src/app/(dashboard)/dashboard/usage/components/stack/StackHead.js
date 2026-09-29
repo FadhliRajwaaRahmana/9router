@@ -12,6 +12,7 @@ import {
   PERIOD_LABELS,
 } from "./format";
 import ProviderDonut from "./ProviderDonut";
+import { useAnimatedNumber } from "./useAnimatedNumber";
 
 /**
  * Kepala tumpukan — lapis teratas halaman.
@@ -172,8 +173,21 @@ export default function StackHead({
   // dollar, dan itu persis jenis salah-baca yang halaman ini ada untuk
   // mencegah.
   const isTokenMode = mode === "tokens";
-  const primaryValue = isTokenMode ? fmtFull(headTokens) : fmtCost(headCost);
-  const secondaryValue = isTokenMode ? fmtCost(headCost) : fmtFull(headTokens);
+
+  // ── Angka yang BERGERAK, bukan melompat ─────────────────────────────────
+  //
+  // Yang dianimasikan adalah NILAI MENTAHNYA, lalu diformat setiap kali.
+  // Menganimasikan string yang sudah diformat tidak mungkin: "$3,69" bukan
+  // bilangan, dan mengurai-mengurai angka berformat setiap frame akan jauh
+  // lebih mahal daripada menghitungnya sekali.
+  //
+  // Konsekuensinya `fmtCost`/`fmtFull` dipanggil tiap frame animasi (~25 kali
+  // untuk 420ms). Keduanya hanya `toFixed`/`toLocaleString` — cukup murah, dan
+  // itu harga yang dibayar untuk angka yang tidak melompat.
+  const animatedCost = useAnimatedNumber(hasData ? headCost : 0);
+  const animatedTokens = useAnimatedNumber(hasData ? headTokens : 0);
+  const primaryValue = isTokenMode ? fmtFull(animatedTokens) : fmtCost(animatedCost);
+  const secondaryValue = isTokenMode ? fmtCost(animatedCost) : fmtFull(animatedTokens);
 
   // Rincian token kepala. `cached` dinyatakan sebagai bagian dari input, dan
   // totalnya tetap input + output — tidak pernah ketiganya dijumlahkan. Lihat
@@ -286,9 +300,7 @@ export default function StackHead({
             className="text-[2.75rem] font-semibold leading-none tracking-[-0.03em] tabular-nums text-text-main sm:text-[3.25rem]"
             style={{ fontVariantNumeric: "tabular-nums" }}
           >
-            <span key={String(primaryValue)} className="value-fade">
-              {hasData ? primaryValue : "—"}
-            </span>
+            {hasData ? primaryValue : "—"}
           </span>
           {mode === "both" ? (
             <span className="text-xs font-medium uppercase tracking-wide text-text-subtle">

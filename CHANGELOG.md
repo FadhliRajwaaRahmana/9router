@@ -1,3 +1,53 @@
+# v0.5.125 (2026-09-30) — 9router-imagefix
+
+## Features
+- **Angka bergerak, bukan melompat.** `value-fade` yang lama hanya menganimasikan OPASITAS —
+  nilainya tetap berpindah dari 3,69 ke 3,75, dan yang terlihat cuma kedipan. Sekarang nilainya
+  benar-benar berjalan, lewat `useAnimatedNumber.js`.
+
+  Easing `easeOutCubic` 420ms: cepat di awal, melambat di akhir. Angka utama, angka pendamping
+  (mode Cost + Tokens), dan nilai tiap baris lapis semuanya ikut.
+
+- **Hover chart lebih halus.** Tooltip FlowChart diberi transisi 120ms (Recharts memunculkannya
+  seketika, dan pada data yang bergerak itu terasa berkedip), `activeDot` tumbuh bertahap, dan
+  garis kursor ikut bertransisi antar-titik.
+
+- **`prefers-reduced-motion` dihormati.** Sebelum ini halaman Usage beranimasi tanpa jalan
+  keluar sama sekali — nol aturan di `globals.css` — padahal halaman ini dipakai berjam-jam,
+  bukan dilihat sekilas. Yang dimatikan hanya DURASI-nya (0,01ms), bukan perubahannya, sehingga
+  tidak ada layout yang bergantung pada selesainya sebuah animasi.
+
+## Fixes
+- **Jangan pernah menganimasikan dari 0 pada render pertama.** Kalau nilai awal dihitung dari 0
+  lalu berjalan naik, membuka halaman menampilkan `$0.00 → $3,69` — dan selama 420ms pertama
+  angkanya BERBOHONG. Halaman ini ada untuk dipercaya. Render pertama memakai nilai akhirnya
+  apa adanya; animasi hanya dijalankan saat nilai BERUBAH.
+
+- **Animasi harus lebih pendek dari jarak antar-pembaruan.** SSE memperbarui beberapa kali per
+  detik; kalau tiap perubahan dianimasikan lebih lama dari itu, animasinya tidak pernah selesai
+  dan angkanya tertinggal dari kenyataan selamanya. Durasi dijaga 420ms dengan easing yang
+  cepat di awal, sehingga nilainya sudah ~95% sampai saat pembaruan berikutnya tiba.
+
+- **Nilai yang sama tidak dianimasikan.** SSE mengirim angka yang sama berulang kali; tanpa
+  penjagaan ini angkanya berkedip tanpa pernah berubah nilainya.
+
+- **Nilai tak sah tidak merambat.** Sekali `NaN` masuk ke interpolasi, seluruh angka di halaman
+  itu `NaN` selamanya. `safeNumber` mengubahnya jadi 0, dan `interpolateList` jatuh ke nilai
+  tujuan saat panjang daftar berubah (provider muncul/hilang saat halaman disaring).
+
+## Catatan
+- **Headless Edge di mesin ini tidak menganimasikan `transition` CSS** — terbukti di
+  `about:blank` tanpa aplikasi: transition menghasilkan 1 nilai dalam 38 frame, sementara
+  `@keyframes` menghasilkan 25 nilai unik. Jadi animasi berbasis transition TIDAK BISA diukur di
+  lingkungan ini, dan setiap pengukuran yang mengandalkannya (termasuk di sesi ini) tidak sah.
+  Hook angka memakai `requestAnimationFrame`, yang terbukti bekerja: 27 frame untuk 420ms,
+  nilai antara `0,41 → 0,84 → 1,24 → … → 4,22`, mendarat tepat di target.
+- `tests/unit/usage-animated-number.test.js` (17 tes) menguji matematikanya tanpa DOM — repo ini
+  tidak punya `jsdom` maupun `@testing-library/react`, dan menambahkan keduanya demi satu hook
+  kecil bukan pertukaran yang baik. Yang diuji: easing tidak pernah melewati target (angka uang
+  tidak boleh menyentuh $3,80 sebelum mendarat di $3,69), gerak turun benar, penjepitan `t`,
+  nilai tak sah, dan penjagaan "tidak berubah → tidak dianimasikan".
+
 # v0.5.124 (2026-09-29) — 9router-imagefix
 
 ## Features
