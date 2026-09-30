@@ -1,3 +1,34 @@
+# v0.5.129 (2026-09-30) — 9router-imagefix
+
+## Fixes
+- **Halaman Usage mati total: `Uncaught ReferenceError: valueFormat is not defined`.**
+  Regresi dari 0.5.128. `valueFormat` dan `secondaryFormat` didefinisikan di dalam
+  `UsageStack`, tetapi DIPAKAI di `LayerBody` — komponen yang berbeda dan berada
+  di lingkup modul, sehingga nama itu tidak ada di sana. Kesalahannya terjadi saat
+  render daftar baris, jadi seluruh halaman Usage gagal dibuka.
+
+  Keduanya dipindah ke tingkat modul (`valueFormatFor(mode)` dan
+  `formatTokensWithSuffix`) — satu definisi yang dipakai kedua komponen, sesuai
+  niat awalnya agar kepala lapis dan tiap baris memakai aturan format yang sama.
+
+  Bug ini lolos dari `next build` karena webpack tidak memeriksa nama bebas
+  (dianggap variabel global), dan lolos dari lint karena `eslint-config-next`
+  tidak mengaktifkan `no-undef`.
+
+## Chores
+- **`no-undef` diaktifkan untuk `src/shared/**` dan `src/app/**/usage/**`.**
+  Kedua area terverifikasi 0 pelanggaran, jadi aturannya bisa dipasang tanpa
+  membanjiri laporan; `src` secara keseluruhan masih punya pelanggaran lama
+  sehingga belum layak global. Diuji dengan berkas probe berisi nama bebas —
+  sekarang langsung ditolak.
+
+## Verification
+- `npm run build` → exit 0, "Compiled successfully".
+- `no-undef` dijalankan pada versi HEAD lama → menunjuk persis `valueFormat`
+  (baris 598) dan `secondaryFormat` (baris 601), membuktikan rule menangkap
+  kelas bug ini.
+- Area terjaga (`src/shared`, usage) → 0 pelanggaran `no-undef`.
+
 # v0.5.128 (2026-09-30) — 9router-imagefix
 
 ## Fixes

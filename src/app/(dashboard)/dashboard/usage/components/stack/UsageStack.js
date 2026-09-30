@@ -370,14 +370,6 @@ export default function UsageStack({ period, stats, live = null, loading, onRetr
   const totalSecondaryFor = (layer) =>
     mode === "both" ? `${fmtFull(layer.totalTokens)} tok` : null;
 
-  // Pemformat untuk angka yang BERANIMASI. Dihitung sekali di sini supaya
-  // kepala lapis, tiap baris, dan panel live memakai aturan yang sama persis —
-  // token selalu bulat (`fmtWhole`), biaya selalu dua/empat desimal (`fmtCost`).
-  // Tanpa `fmtWhole`, token yang sedang berjalan akan tercetak berdesimal di
-  // tengah animasi dan terbaca seperti kesalahan data.
-  const valueFormat = mode === "tokens" ? fmtWhole : fmtCost;
-  const secondaryFormat = (v) => `${fmtWhole(v)} tok`;
-
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <StackHead
@@ -451,10 +443,10 @@ export default function UsageStack({ period, stats, live = null, loading, onRetr
               folded={i > 0}
               count={totalFor(layer)}
               countValue={mode === "tokens" ? layer.totalTokens : layer.totalCost}
-              countFormat={valueFormat}
+              countFormat={valueFormatFor(mode)}
               countSecondary={totalSecondaryFor(layer)}
               countSecondaryValue={mode === "both" ? layer.totalTokens : undefined}
-              countSecondaryFormat={mode === "both" ? secondaryFormat : undefined}
+              countSecondaryFormat={mode === "both" ? formatTokensWithSuffix : undefined}
               meta={
                 layer.rows.length === 0
                   ? "no match"
@@ -511,6 +503,21 @@ const ROW_LIMIT_SEARCHING = 40;
  */
 const ANIMATE_LIMIT = 24;
 
+/**
+ * Pemformat untuk angka yang BERANIMASI.
+ *
+ * Diletakkan di tingkat MODUL, bukan di dalam komponen: nilai ini dipakai oleh
+ * `UsageStack` (angka total tiap lapis) DAN oleh `LayerBody` (nilai tiap baris),
+ * dan keduanya adalah komponen yang berbeda. Menaruhnya di dalam `UsageStack`
+ * membuat `LayerBody` merujuk nama yang tidak ada di lingkupnya.
+ *
+ * Aturannya harus sama di kedua tempat: token selalu BULAT (`fmtWhole`), biaya
+ * selalu dua/empat desimal (`fmtCost`). Tanpa `fmtWhole`, token yang sedang
+ * berjalan akan tercetak berdesimal di tengah animasi.
+ */
+const valueFormatFor = (mode) => (mode === "tokens" ? fmtWhole : fmtCost);
+const formatTokensWithSuffix = (v) => `${fmtWhole(v)} tok`;
+
 function LayerBody({
   layer,
   dimension,
@@ -532,6 +539,10 @@ function LayerBody({
   const limit = hasQuery ? ROW_LIMIT_SEARCHING : ROW_LIMIT;
   const rows = showAll ? layer.rows : layer.rows.slice(0, limit);
   const hidden = layer.rows.length - rows.length;
+
+  // Pemformat angka yang beranimasi untuk lapis ini. `valueFormatFor` hidup di
+  // tingkat modul karena `UsageStack` memakainya juga untuk angka total lapis.
+  const valueFormat = valueFormatFor(mode);
 
   if (layer.rows.length === 0) {
     return (
@@ -598,7 +609,7 @@ function LayerBody({
                   valueFormat={valueFormat}
                   valueSecondary={secondaryFor(row)}
                   valueSecondaryRaw={rowIndex < ANIMATE_LIMIT ? row.tokens : undefined}
-                  valueSecondaryFormat={mode === "both" ? secondaryFormat : undefined}
+                  valueSecondaryFormat={mode === "both" ? formatTokensWithSuffix : undefined}
                   // Rincian token di tooltip: angka di layar tetap satu nilai
                   // yang bisa dipindai, tapi pecahan input/cached/output harus
                   // terjangkau dari baris yang sama — kalau tidak, operator
