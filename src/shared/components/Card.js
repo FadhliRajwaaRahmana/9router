@@ -2,7 +2,6 @@
 
 import { cn } from "@/shared/utils/cn";
 import { motion, useReducedMotion } from "motion/react";
-import { CARD_VARIANTS, useStaggerInherit } from "@/shared/motion/primitives";
 
 /**
  * Kartu — dipakai 69 berkas di seluruh dashboard.
@@ -24,14 +23,14 @@ import { CARD_VARIANTS, useStaggerInherit } from "@/shared/motion/primitives";
  * transition seperti semula, karena mengubahnya menjadi animasi Motion berarti
  * mengubah perilaku yang sudah dipakai. Yang ditambahkan hanya kemunculannya.
  *
- * ── Stagger: kartu menyusul, bukan serentak ────────────────────────────────
+ * ── Mengapa TIDAK ikut stagger halaman ────────────────────────────────────
  *
- * Saat berada di dalam `PageTransition`, kartu ini tidak menyalakan animasinya
- * sendiri melainkan MEWARISI varians halaman (`CARD_VARIANTS`). Itu yang
- * membuat sebaris kartu masuk berurutan alih-alih berkedip bersamaan — dan
- * itulah bedanya "ada animasi" dengan "terasa hidup". Di luar wadah itu
- * (landing page, kartu di dalam modal) ia tetap beranimasi sendiri seperti
- * semula, sehingga tidak ada tempat yang kehilangan kemunculannya.
+ * Sebelumnya kartu ini bisa mewarisi `staggerChildren` dari `PageTransition`.
+ * Itu dilepas: `staggerChildren` tidak punya batas atas, dan halaman dengan
+ * ratusan kartu (Providers) membuat kartu terakhir baru muncul setelah beberapa
+ * detik — terlihat kosong, dan halaman tampak rusak. Kartu sekarang selalu
+ * beranimasi sendiri, serentak. Stagger yang TERBATAS tetap tersedia lewat
+ * primitif `Stagger` untuk daftar yang jumlahnya diketahui.
  */
 export default function Card({
   children,
@@ -49,7 +48,6 @@ export default function Card({
   ...props
 }) {
   const reduce = useReducedMotion();
-  const staggered = useStaggerInherit();
 
   const paddings = {
     none: "",
@@ -79,19 +77,8 @@ export default function Card({
     );
   }
 
-  // Di dalam halaman ber-stagger: mewarisi varians dari pembungkus halaman.
-  // Tidak ada `animate` sendiri — anak yang menyalakan `animate` keluar dari
-  // antrean `staggerChildren` milik leluhurnya.
-  if (staggered) {
-    return (
-      <motion.div initial="hidden" variants={CARD_VARIANTS} className={kelas} {...props}>
-        <IsiKartu title={title} subtitle={subtitle} icon={icon} action={action}>
-          {children}
-        </IsiKartu>
-      </motion.div>
-    );
-  }
-
+  // Muncul sendiri — serentak dengan kartu lain di halaman yang sama. Untuk
+  // daftar yang jumlahnya terbatas, bungkus dengan primitif `Stagger`.
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}

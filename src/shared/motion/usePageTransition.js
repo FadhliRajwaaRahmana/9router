@@ -39,7 +39,7 @@ function reducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-export function useSmoothScroll(ref, { enabled = true } = {}) {
+export function useSmoothScroll(ref, { enabled = true, contentRef } = {}) {
   useEffect(() => {
     const el = ref.current;
     if (!el || !enabled) return;
@@ -50,7 +50,15 @@ export function useSmoothScroll(ref, { enabled = true } = {}) {
 
     const lenis = new Lenis({
       wrapper: el,
-      content: el.firstElementChild || el,
+      // `contentRef` = pembungkus isi yang STABIL lintas navigasi.
+      //
+      // Memakai `el.firstElementChild` langsung tampak benar pada muat pertama,
+      // tapi elemen itu DIGANTI setiap pindah halaman (AnimatePresence melepas
+      // anak lama). ResizeObserver Lenis lalu menempel pada elemen yang sudah
+      // lepas dari DOM: tidak ada sinyal resize lagi, `resize()` tidak pernah
+      // jalan, dan `limit` gulir beku pada tinggi halaman sebelumnya — halaman
+      // panjang hanya bisa digulir sebagian, tidak sampai bawah.
+      content: contentRef?.current || el.firstElementChild || el,
       // 0.1 = nilai bawaan Lenis, dan justru itu yang terasa "halus": tiap
       // frame hanya menempuh ~10% sisa jarak, sehingga roda mouse terasa
       // meluncur alih-alih menempel 1:1.
@@ -92,7 +100,7 @@ export function useSmoothScroll(ref, { enabled = true } = {}) {
       if (frame) cancelAnimationFrame(frame);
       lenis.destroy();
     };
-  }, [ref, enabled]);
+  }, [ref, enabled, contentRef]);
 }
 
 /**

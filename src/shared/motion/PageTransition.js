@@ -2,9 +2,9 @@
 
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useMemo, useRef } from "react";
+import { useRef } from "react";
 import { useSmoothScroll } from "./usePageTransition";
-import { ScrollProgress, StaggerInheritContext, pageVariants } from "./primitives";
+import { ScrollProgress } from "./primitives";
 
 /**
  * Transisi antar-halaman + smooth scroll, dipasang SEKALI di layout.
@@ -31,32 +31,32 @@ import { ScrollProgress, StaggerInheritContext, pageVariants } from "./primitive
  * Hanya opasitas dan geser 8px. Tidak ada skala, tidak ada blur: keduanya
  * memaksa repaint seluruh area dan pada tabel besar terasa tersendat.
  *
- * ── Stagger: halaman muncul, lalu ISINYA menyusul ──────────────────────────
+ * ── Stagger: TIDAK lagi otomatis di sini ──────────────────────────────────
  *
- * Pembungkus ini juga sumber `staggerChildren` untuk seluruh halaman. `Card`
- * yang berada di bawahnya mewarisi varians ini (lewat `StaggerInheritContext`),
- * sehingga kartu pertama masuk ~20ms setelah halaman, kartu berikutnya 45ms
- * kemudian, dan seterusnya. Sebelumnya tiap kartu menyalakan animasinya sendiri
- * dengan `delay: 0`, jadi seisi halaman muncul serentak — terasa sebagai satu
- * kedipan, bukan sebagai halaman yang tersusun.
+ * Pembungkus ini dulu menjadi sumber `staggerChildren` sehingga setiap `Card`
+ * di halaman menyusul berurutan. Itu DILEPAS: `staggerChildren` tidak punya
+ * batas atas, dan halaman dengan ratusan kartu (Providers) membuat kartu
+ * terakhir baru muncul setelah beberapa detik — terlihat kosong, sehingga
+ * halaman tampak "tidak sampai bawah". Stagger yang terbatas tetap tersedia
+ * lewat primitif `Stagger` untuk daftar yang jumlahnya diketahui.
  *
  * `prefers-reduced-motion` dihormati lewat `useReducedMotion` — durasinya jadi
- * nol dan stagger dimatikan, bukan animasinya dihapus, sehingga tidak ada yang
- * bergantung pada selesainya sebuah transisi.
+ * nol, bukan animasinya dihapus, sehingga tidak ada yang bergantung pada
+ * selesainya sebuah transisi.
  */
 export function PageTransition({ children }) {
   const pathname = usePathname();
   const reduce = useReducedMotion();
   const scrollRef = useRef(null);
+  // Elemen isi yang STABIL lintas navigasi — lihat catatan di
+  // `useSmoothScroll` soal kenapa `firstElementChild` tidak boleh dipakai
+  // langsung (limit gulir bisa beku di tinggi halaman sebelumnya).
+  const contentRef = useRef(null);
 
-  useSmoothScroll(scrollRef);
+  useSmoothScroll(scrollRef, { contentRef });
 
   const dur = reduce ? 0 : 0.22;
   const durOut = reduce ? 0 : 0.14;
-
-  // Identitas objek variants harus STABIL antar-render: objek baru tiap render
-  // membuat Motion menganggapnya definisi baru dan bisa memicu ulang animasi.
-  const variants = useMemo(() => pageVariants(reduce, dur, durOut), [reduce, dur, durOut]);
 
   return (
     <div className="relative flex-1 min-h-0 flex flex-col">
@@ -70,24 +70,24 @@ export function PageTransition({ children }) {
         className="flex-1 overflow-y-auto custom-scrollbar"
         data-smooth-scroll=""
       >
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={pathname}
-            initial="hidden"
-            animate="show"
-            exit="exit"
-            variants={variants}
-            className="min-h-full"
-          >
-            {/* Seluruh isi halaman mewarisi izin ber-stagger. `Card` membaca
-                konteks ini dan, kalau boleh, masuk lewat varians alih-alih
-                menyalakan animasinya sendiri — itulah yang membuat kartu-kartu
-                menyusul berurutan alih-alih muncul serentak sebagai satu blok. */}
-            <StaggerInheritContext.Provider value={!reduce}>
+        {/* Pembungkus STABIL. Lenis butuh satu elemen `content` yang tidak
+            berganti antar-navigasi; kalau yang dipakai adalah anak pertama
+            wadah gulir, elemen itu diganti setiap pindah halaman dan
+            ResizeObserver Lenis menempel pada elemen yang sudah lepas dari DOM. */}
+        <div ref={contentRef} className="min-h-full">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={pathname}
+              initial={{ opacity: 0, y: reduce ? 0 : 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: reduce ? 0 : -8 }}
+              transition={{ duration: dur, exit: { duration: durOut }, ease: [0.2, 0.8, 0.2, 1] }}
+              className="min-h-full"
+            >
               {children}
-            </StaggerInheritContext.Provider>
-          </motion.div>
-        </AnimatePresence>
+            </motion.div>
+          </AnimatePresence>
+        </div>
       </div>
     </div>
   );

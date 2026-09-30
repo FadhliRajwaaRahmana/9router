@@ -1,3 +1,39 @@
+# v0.5.130 (2026-09-30) — 9router-imagefix
+
+## Fixes
+- **Halaman panjang (mis. Providers) hanya bisa digulir sebagian, tidak sampai
+  bawah.** Penyebabnya `content` milik Lenis. `useSmoothScroll` menyerahkan
+  `el.firstElementChild` sebagai elemen isi, dan itu hanya benar pada muat
+  pertama: `AnimatePresence` menukar anaknya setiap kali pindah halaman,
+  sehingga ResizeObserver Lenis menempel pada elemen yang sudah dilepas dari DOM.
+  Tidak ada lagi sinyal resize, `resize()` tidak pernah berjalan, dan `limit`
+  gulir BEKU pada tinggi halaman sebelumnya — halaman digulir sampai titik itu,
+  lalu berhenti (mis. berhenti di "Mistral" padahal daftarnya masih panjang).
+
+  Limit Lenis memang dihitung dari `wrapper.scrollHeight`, tapi tetap butuh
+  sinyal resize untuk dihitung ulang. `PageTransition` kini menyediakan
+  pembungkus isi yang STABIL (`contentRef`) yang tidak diganti antar-navigasi,
+  jadi ResizeObserver terus hidup dan tinggi isi selalu terukur benar.
+
+- **Stagger halaman tanpa batas: kartu di bawah terlihat kosong beberapa detik.**
+  Regresi dari 0.5.128. `PageTransition` dijadikan sumber `staggerChildren`, dan
+  `staggerChildren` milik Motion memberi tiap anak delay `index × step` TANPA
+  batas atas. Halaman Providers merender ratusan kartu, jadi kartu terakhir baru
+  muncul setelah beberapa detik — ruangnya ada, isinya belum. Itu ikut membuat
+  halaman tampak "tidak sampai bawah".
+
+  Stagger otomatis se-halaman dilepas (`pageVariants`, `CARD_VARIANTS`, dan
+  `StaggerInheritContext` dihapus dari `primitives.js`). `STAGGER_CAP` hanya
+  benar untuk primitif `Stagger`, yang menghitung delay-nya sendiri dari index
+  yang sudah dijepit — dan itu tetap dipakai di halaman Skills. `Card` kembali
+  beranimasi sendiri, serentak.
+
+## Verification
+- `npm run build` → exit 0, "Compiled successfully".
+- `rg` tidak menemukan sisa referensi ke `pageVariants` / `CARD_VARIANTS` /
+  `StaggerInheritContext` (tinggal di komentar penjelasan).
+- ESLint bersih pada seluruh berkas yang diubah.
+
 # v0.5.129 (2026-09-30) — 9router-imagefix
 
 ## Fixes
