@@ -1,3 +1,58 @@
+# v0.5.126 (2026-09-30) — 9router-imagefix
+
+## Features
+- **Animasi di seluruh dashboard: Motion + GSAP + Lenis.** Terpasang lewat
+  LAPISAN yang dipakai berulang, bukan animasi per-elemen di 24 halaman.
+
+  Dua alasan bentuknya begitu. Pertama, 24 berkas berarti 24 tempat yang bisa
+  salah, masing-masing dengan durasi dan easing sendiri. Kedua — dan yang lebih
+  menentukan — halaman Usage punya 600 baris akun, providers dan quota ratusan:
+  menjadikan tiap baris komponen beranimasi berarti ratusan langganan yang
+  render ulang tiap frame, dan stagger 40ms × 600 baris membuat baris terakhir
+  muncul setelah 24 detik. Itu rusak, bukan kaya.
+
+  | Lapisan | Cakupan | Library |
+  |---|---|---|
+  | Transisi halaman | semua 12 menu, satu tempat di layout | Motion |
+  | Stagger sidebar + sorotan bergeser | 15 menu | Motion (`layoutId`) |
+  | Smooth scroll container | semua halaman | Lenis |
+  | Garis progres gulir | semua halaman | GSAP ScrollTrigger |
+  | Animasi masuk kartu | 69 berkas pemakai `Card` | Motion |
+  | Primitif siap pakai | `Reveal`, `Stagger`, `HoverLift`, `Magnetic`, `CountUpOnView`, `PageShell` | Motion + GSAP |
+
+- **`STAGGER_CAP = 12`.** Di atas 12 item, sisanya muncul bersamaan. Mata tidak
+  lagi bisa membedakan stagger setelah belasan item, dan tanpa batas ini daftar
+  panjang akan menunggu puluhan detik.
+
+- **Sorotan menu bergeser, bukan berkedip.** `layoutId` yang sama di dua elemen
+  membuat Motion menganimasikannya sebagai SATU latar yang berpindah. Dua latar
+  yang saling memudar terlihat sebagai kedipan; satu latar yang bergerak terbaca
+  sebagai satu benda yang pindah tempat.
+
+## Catatan
+- **Lenis diuji lebih dulu, sesuai kesepakatan.** Enam pemeriksaan lulus:
+  `<html>` tetap tidak menggulir, sidebar tidak bergeser (`x:0, y:0`), konten
+  tetap bisa digulir (1923px di 627px layar), dan — yang paling penting —
+  scroll bersarang aman: panel di console-log menggulir sendiri tanpa
+  memindahkan halaman, berkat `prevent` yang mendeteksi elemen ber-`overflow-y`.
+  Lenis dipasang di CONTAINER, bukan dokumen: `<html>`/`<body>` tidak pernah
+  menggulir di layout ini, jadi Lenis di dokumen tidak akan melakukan apa pun.
+- **GSAP dimuat dinamis.** Paketnya 6,4MB; halaman yang tidak memakai hitungan
+  panjang tidak perlu memuatnya sama sekali.
+- **`Button` tidak disentuh.** Ia sudah punya `active:scale-[0.97]` dari CSS;
+  menambahkan Motion di atasnya hanya menambah lapisan DOM tanpa manfaat.
+- **`prefers-reduced-motion` dihormati di SETIAP primitif**, bukan di satu
+  tempat saja — komponen yang lupa memeriksanya akan tetap memberi gerakan
+  kepada operator yang sudah mematikannya.
+
+## Verifikasi
+- 12 halaman menu diuji: animasi jalan, garis progres ada di 12/12, nol overflow
+  horizontal, nol halaman error. `motion 91` elemen di providers dan `40` di
+  quota menunjukkan animasinya tersebar ke isi halaman, bukan hanya pembungkus.
+- Suite **2072 tes / 87 gagal — identik baseline, nol regresi**.
+- Stagger sidebar terbukti dari frame nol: `0.55,0.23,0.00` → `0.71,0.48,0.13`
+  → `0.81,0.67,0.41` — tiap menu mendahului menu berikutnya.
+
 # v0.5.125 (2026-09-30) — 9router-imagefix
 
 ## Features
