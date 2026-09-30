@@ -1,3 +1,38 @@
+# v0.5.127 (2026-09-30) — 9router-imagefix
+
+## Fixes
+- **`getSettings()` dibaca ~8× per request tanpa cache.** Ditemukan lewat
+  knowledge graph codebase (god node #2: fan-in 93, fan-out 2). `settingsRepo`
+  adalah satu-satunya repo yang tidak punya cache, padahal `getSettings()`
+  dipanggil di jalur panas: satu request dengan N fallback akun membaca baris
+  settings `1 + 1 + 2N` kali (`auth.js` membacanya di dalam loop pemilihan akun,
+  `chat.js` di `handleChat` + `handleSingleModelChat`). Tiap panggilan =
+  `SELECT data FROM settings WHERE id=1` + `JSON.parse` + merge ~80 default.
+
+  Sekarang ada cache TTL 5 dtk untuk baris mentah. `mergeWithDefaults()` tetap
+  dijalankan tiap panggilan, jadi hasilnya objek baru — tidak ada objek bersama
+  yang bisa dimutasi pemanggil.
+
+- **Kebenaran invalidation, bukan mengandalkan TTL.** `updateSettings()`
+  meng-invalidate cache secara sinkron, sehingga setiap tulis lewat API repo
+  terlihat pada baca berikutnya (bukan menunggu 5 dtk). `importDb()` — yang
+  menulis baris settings dengan SQL langsung — juga meng-invalidate. TTL hanya
+  membatasi staleness untuk penulis di luar repo; migrasi legacy berjalan di DB
+  segar sebelum server melayani trafik.
+
+- **Backup tetap point-in-time.** `exportSettings()` memakai jalur baca langsung
+  (`readRawDirect()`), bukan cache.
+
+## Catatan
+- Perbandingan pola: `pricingRepo` (TTL 5 dtk), `requestDetailsRepo` (TTL
+  5 dtk), `usageRepo` (connCache 30 dtk) — `settingsRepo` kini mengikuti pola
+  yang sama.
+- Tes: `tests/unit/settings-cache.test.js` (4 kasus) — memastikan tulis terlihat
+  setelah cache terisi, merge default tetap utuh, export point-in-time, dan
+  `importDb` meng-invalidate. `unit/db-sqlite-vs-lowdb.test.js`: 22/22 assertion
+  lulus. Tiga kegagalan `unit/db-concurrent.test.js` adalah baseline lama
+  (terbukti identik saat perubahan ini di-revert), bukan regresi.
+
 # v0.5.126 (2026-09-30) — 9router-imagefix
 
 ## Features
