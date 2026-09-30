@@ -30,8 +30,26 @@ import { EASE, DUR } from "./primitives";
  * sudah bisa diklik sebelum operator selesai membaca judulnya mengundang
  * klik yang salah. 60ms lebih lambat tidak terasa; klik yang keliru terasa.
  */
-export function PageShell({ title, subtitle, actions, children, className = "" }) {
+export function PageShell({
+  title,
+  subtitle,
+  actions,
+  children,
+  className = "",
+  titleAs = "h1",
+  // Tipografi bisa ditimpa supaya halaman yang sudah punya gaya judul sendiri
+  // tidak berubah rupa hanya karena kepalanya dipindah ke primitif ini.
+  titleClassName = "text-lg font-semibold text-text-main",
+  subtitleClassName = "mt-0.5 text-sm text-text-muted",
+}) {
   const reduce = useReducedMotion();
+
+  // Tingkat judul bisa diturunkan (h1 → h2) supaya `PageShell` juga bisa dipakai
+  // sebagai kepala SEKSI, bukan hanya kepala halaman. Header global sudah
+  // menampilkan judul halaman, jadi seksi di dalamnya memakai h2 — memakai h1
+  // lagi akan membuat struktur dokumen berbohong tentang apa yang penting.
+  const Heading = titleAs;
+  const MotionHeading = motion[titleAs] || motion.h1;
 
   if (reduce) {
     return (
@@ -39,10 +57,10 @@ export function PageShell({ title, subtitle, actions, children, className = "" }
         {(title || actions) && (
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
-              {title ? <h1 className="text-lg font-semibold text-text-main">{title}</h1> : null}
-              {subtitle ? <p className="mt-0.5 text-sm text-text-muted">{subtitle}</p> : null}
+              {title ? <Heading className={titleClassName}>{title}</Heading> : null}
+              {subtitle ? <p className={subtitleClassName}>{subtitle}</p> : null}
             </div>
-            {actions}
+            <div className="w-full sm:w-auto">{actions}</div>
           </div>
         )}
         {children}
@@ -62,17 +80,24 @@ export function PageShell({ title, subtitle, actions, children, className = "" }
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             {title ? (
-              <motion.h1 {...naik(0)} className="text-lg font-semibold text-text-main">
+              <MotionHeading {...naik(0)} className={titleClassName}>
                 {title}
-              </motion.h1>
+              </MotionHeading>
             ) : null}
             {subtitle ? (
-              <motion.p {...naik(0.05)} className="mt-0.5 text-sm text-text-muted">
+              <motion.p {...naik(0.05)} className={subtitleClassName}>
                 {subtitle}
               </motion.p>
             ) : null}
           </div>
-          {actions ? <motion.div {...naik(0.1)}>{actions}</motion.div> : null}
+          {actions ? (
+            // `w-full sm:w-auto` supaya aksi yang memakai `w-full` di layar kecil
+            // (pola yang sudah dipakai halaman-halaman ini) tetap selebar
+            // induknya, bukan menciut ke lebar isinya.
+            <motion.div {...naik(0.1)} className="w-full sm:w-auto">
+              {actions}
+            </motion.div>
+          ) : null}
         </div>
       )}
       {children}

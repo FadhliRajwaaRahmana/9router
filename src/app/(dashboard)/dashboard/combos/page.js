@@ -9,6 +9,8 @@ import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModa
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { PageShell } from "@/shared/motion/PageShell";
+import { HoverLift } from "@/shared/motion/primitives";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -196,21 +198,21 @@ export default function CombosPage() {
   return (
     <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
       {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <p className="text-sm text-text-muted mt-1">
-            Group models under one name, then pick a strategy per combo:
-          </p>
-          <ul className="text-sm text-text-muted mt-2 flex flex-col gap-1">
-            <li><span className="font-medium text-text-main">Fallback</span> — tries models in order (next on failure)</li>
-            <li><span className="font-medium text-text-main">Round Robin</span> — rotates models across requests to spread load</li>
-            <li><span className="font-medium text-text-main">Fusion</span> — queries all models in parallel, then a judge synthesizes one answer. Best quality, but costs the most: every request bills all panel models + the judge (N+1 calls)</li>
-          </ul>
-        </div>
-        <Button icon="add" onClick={() => setShowCreateModal(true)} className="w-full sm:w-auto whitespace-nowrap">
-          Create Combo
-        </Button>
-      </div>
+      <PageShell
+        subtitleClassName="text-sm text-text-muted mt-1"
+        subtitle="Group models under one name, then pick a strategy per combo:"
+        actions={
+          <Button icon="add" onClick={() => setShowCreateModal(true)} className="w-full sm:w-auto whitespace-nowrap">
+            Create Combo
+          </Button>
+        }
+      >
+        <ul className="text-sm text-text-muted mt-2 flex flex-col gap-1">
+          <li><span className="font-medium text-text-main">Fallback</span> — tries models in order (next on failure)</li>
+          <li><span className="font-medium text-text-main">Round Robin</span> — rotates models across requests to spread load</li>
+          <li><span className="font-medium text-text-main">Fusion</span> — queries all models in parallel, then a judge synthesizes one answer. Best quality, but costs the most: every request bills all panel models + the judge (N+1 calls)</li>
+        </ul>
+      </PageShell>
 
       {/* Combos List */}
       {combos.length === 0 ? (
@@ -229,18 +231,19 @@ export default function CombosPage() {
       ) : (
         <div className="flex flex-col gap-4">
           {combos.map((combo) => (
-            <ComboCard
-              key={combo.id}
-              combo={combo}
-              getCaps={getCaps}
-              activeProviders={activeProviders}
-              copied={copied}
-              onCopy={copy}
-              onEdit={() => setEditingCombo(combo)}
-              onDelete={() => handleDelete(combo.id)}
-              strategy={comboStrategies[combo.name] || {}}
-              onSetStrategy={(patch) => handleSetComboStrategy(combo.name, patch)}
-            />
+            <HoverLift key={combo.id}>
+              <ComboCard
+                combo={combo}
+                getCaps={getCaps}
+                activeProviders={activeProviders}
+                copied={copied}
+                onCopy={copy}
+                onEdit={() => setEditingCombo(combo)}
+                onDelete={() => handleDelete(combo.id)}
+                strategy={comboStrategies[combo.name] || {}}
+                onSetStrategy={(patch) => handleSetComboStrategy(combo.name, patch)}
+              />
+            </HoverLift>
           ))}
         </div>
       )}

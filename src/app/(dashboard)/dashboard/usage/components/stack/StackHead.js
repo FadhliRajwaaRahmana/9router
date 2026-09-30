@@ -7,12 +7,13 @@ import {
   fmtCount,
   fmtPercent,
   fmtTokenDetail,
+  fmtWhole,
   share,
   VALUE_MODES,
   PERIOD_LABELS,
 } from "./format";
 import ProviderDonut from "./ProviderDonut";
-import { useAnimatedNumber } from "./useAnimatedNumber";
+import AnimatedNumber from "./AnimatedNumber";
 
 /**
  * Kepala tumpukan — lapis teratas halaman.
@@ -176,18 +177,15 @@ export default function StackHead({
 
   // ── Angka yang BERGERAK, bukan melompat ─────────────────────────────────
   //
-  // Yang dianimasikan adalah NILAI MENTAHNYA, lalu diformat setiap kali.
-  // Menganimasikan string yang sudah diformat tidak mungkin: "$3,69" bukan
-  // bilangan, dan mengurai-mengurai angka berformat setiap frame akan jauh
-  // lebih mahal daripada menghitungnya sekali.
-  //
-  // Konsekuensinya `fmtCost`/`fmtFull` dipanggil tiap frame animasi (~25 kali
-  // untuk 420ms). Keduanya hanya `toFixed`/`toLocaleString` — cukup murah, dan
-  // itu harga yang dibayar untuk angka yang tidak melompat.
-  const animatedCost = useAnimatedNumber(hasData ? headCost : 0);
-  const animatedTokens = useAnimatedNumber(hasData ? headTokens : 0);
-  const primaryValue = isTokenMode ? fmtFull(animatedTokens) : fmtCost(animatedCost);
-  const secondaryValue = isTokenMode ? fmtCost(animatedCost) : fmtFull(animatedTokens);
+  // Yang mengalir ke `AnimatedNumber` adalah NILAI MENTAHNYA, bukan string
+  // yang sudah diformat: "$3,69" bukan bilangan, dan mengurai ulang angka
+  // berformat setiap frame jauh lebih mahal daripada menghitung nilai sekali
+  // lalu memformat tiap frame. Token dibulatkan lewat `fmtWhole` supaya animasi
+  // tidak pernah mencetak token pecahan.
+  const primaryRaw = isTokenMode ? headTokens : headCost;
+  const primaryFmt = isTokenMode ? fmtWhole : fmtCost;
+  const secondaryRaw = isTokenMode ? headCost : headTokens;
+  const secondaryFmt = isTokenMode ? fmtCost : fmtWhole;
 
   // Rincian token kepala. `cached` dinyatakan sebagai bagian dari input, dan
   // totalnya tetap input + output — tidak pernah ketiganya dijumlahkan. Lihat
@@ -296,12 +294,17 @@ export default function StackHead({
             sebelah kanan ("spent…" / "tokens…"), jadi menaruhnya dua kali hanya
             menambah keriuhan. */}
         <span className="flex items-baseline gap-2">
-          <span
-            className="text-[2.75rem] font-semibold leading-none tracking-[-0.03em] tabular-nums text-text-main sm:text-[3.25rem]"
-            style={{ fontVariantNumeric: "tabular-nums" }}
-          >
-            {hasData ? primaryValue : "—"}
-          </span>
+          {hasData ? (
+            <AnimatedNumber
+              value={primaryRaw}
+              format={primaryFmt}
+              className="text-[2.75rem] font-semibold leading-none tracking-[-0.03em] tabular-nums text-text-main sm:text-[3.25rem]"
+            />
+          ) : (
+            <span className="text-[2.75rem] font-semibold leading-none tracking-[-0.03em] tabular-nums text-text-main sm:text-[3.25rem]">
+              —
+            </span>
+          )}
           {mode === "both" ? (
             <span className="text-xs font-medium uppercase tracking-wide text-text-subtle">
               {isTokenMode ? "tokens" : "cost"}
@@ -311,12 +314,17 @@ export default function StackHead({
 
         {mode === "both" ? (
           <span className="flex items-baseline gap-2">
-            <span
-              className="text-[1.75rem] font-semibold leading-none tracking-[-0.02em] tabular-nums text-text-main sm:text-[2rem]"
-              style={{ fontVariantNumeric: "tabular-nums" }}
-            >
-              {hasData ? secondaryValue : "—"}
-            </span>
+            {hasData ? (
+              <AnimatedNumber
+                value={secondaryRaw}
+                format={secondaryFmt}
+                className="text-[1.75rem] font-semibold leading-none tracking-[-0.02em] tabular-nums text-text-main sm:text-[2rem]"
+              />
+            ) : (
+              <span className="text-[1.75rem] font-semibold leading-none tracking-[-0.02em] tabular-nums text-text-main sm:text-[2rem]">
+                —
+              </span>
+            )}
             <span className="text-xs font-medium uppercase tracking-wide text-text-subtle">
               {isTokenMode ? "cost" : "tokens"}
             </span>
@@ -326,7 +334,7 @@ export default function StackHead({
         <span className="text-sm text-text-muted">
           {mode === "costs" ? "spent" : mode === "tokens" ? "tokens" : null}
           {mode !== "both" ? <span className="mx-2 text-text-subtle">·</span> : null}
-          <span className="tabular-nums">{fmtFull(requests)}</span> requests
+          <AnimatedNumber value={requests} format={fmtWhole} className="tabular-nums" /> requests
           {activeCount > 0 ? (
             <>
               <span className="mx-2 text-text-subtle">·</span>
@@ -389,7 +397,7 @@ export default function StackHead({
                 style={{ backgroundColor: "color-mix(in oklab, var(--color-primary) 30%, var(--color-surface))" }}
                 aria-hidden="true"
               />
-              <span className="tabular-nums text-text-main">{fmtFull(headIn - headCached)}</span>
+              <AnimatedNumber value={headIn - headCached} format={fmtWhole} className="tabular-nums text-text-main" />
               {/* "uncached", bukan "input". Segmen ini adalah bagian input yang
                   TIDAK kena cache — menyebutnya "input" membuatnya terbaca
                   sebagai seluruh input, padahal input totalnya justru
@@ -406,7 +414,7 @@ export default function StackHead({
                   style={{ backgroundColor: "var(--color-primary)" }}
                   aria-hidden="true"
                 />
-                <span className="tabular-nums text-text-main">{fmtFull(headCached)}</span>
+                <AnimatedNumber value={headCached} format={fmtWhole} className="tabular-nums text-text-main" />
                 cached
                 <span className="text-text-subtle">
                   ({fmtPercent(cachedShare)} of input)
@@ -419,7 +427,7 @@ export default function StackHead({
                 style={{ backgroundColor: "var(--color-border)" }}
                 aria-hidden="true"
               />
-              <span className="tabular-nums text-text-main">{fmtFull(headOut)}</span>
+              <AnimatedNumber value={headOut} format={fmtWhole} className="tabular-nums text-text-main" />
               output
               <span className="text-text-subtle">({fmtPercent(outShare)} of total)</span>
             </span>

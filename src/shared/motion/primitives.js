@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { motion, useInView, useReducedMotion, useMotionValue, useSpring } from "motion/react";
 
 /**
@@ -48,6 +48,69 @@ export const DUR = { fast: 0.16, base: 0.24, slow: 0.36 };
  * membedakan stagger setelah belasan item.
  */
 export const STAGGER_CAP = 12;
+
+/**
+ * Konteks "aku berada di dalam wadah yang men-stagger anak-anaknya".
+ *
+ * ── Mengapa perlu konteks, bukan prop ───────────────────────────────────────
+ *
+ * `Card` dipakai 69 berkas. Menambahkan prop `inherit` berarti 69 tempat harus
+ * meneruskannya, dan satu yang lupa berarti satu halaman kehilangan stagger-nya.
+ * Konteks membuatnya otomatis: begitu sebuah halaman berada di dalam
+ * `PageTransition`, semua `Card` di bawahnya ikut menyusul berurutan tanpa satu
+ * pun berkas halaman perlu disentuh.
+ *
+ * Nilainya sengaja hanya boolean ("boleh mewarisi?"), bukan nomor urut. Nomor
+ * urut harus dihitung dan disinkronkan; Motion sudah punya `staggerChildren`
+ * yang menghitungnya dari urutan anak yang sebenarnya, dan itu selalu benar.
+ */
+export const StaggerInheritContext = createContext(false);
+
+/** Apakah komponen ini berada di dalam wadah ber-stagger. */
+export function useStaggerInherit() {
+  return useContext(StaggerInheritContext);
+}
+
+/**
+ * Variants untuk pembungkus halaman: halaman memudar masuk, lalu anak-anaknya
+ * (kartu, panel) menyusul berurutan.
+ *
+ * Dibuat sebagai fungsi, bukan konstanta, karena durasinya bergantung pada
+ * `prefers-reduced-motion`. Yang dipanggil di sini harus dimemo dengan dependensi
+ * yang sama di pemanggilnya, supaya identitas objeknya stabil antar-render.
+ */
+export function pageVariants(reduce, dur, durOut) {
+  return {
+    hidden: { opacity: 0, y: reduce ? 0 : 8 },
+    show: {
+      opacity: 1,
+      y: 0,
+      transition: {
+        duration: dur,
+        ease: EASE,
+        // Halaman selesai memudar DULU, baru anak-anaknya masuk. Tanpa
+        // `when`, kartu pertama sudah bergerak saat halaman masih transparan,
+        // dan gerakannya terbuang percuma.
+        when: "beforeChildren",
+        staggerChildren: reduce ? 0 : 0.045,
+        delayChildren: reduce ? 0 : 0.02,
+      },
+    },
+    exit: { opacity: 0, y: reduce ? 0 : -8, transition: { duration: durOut, ease: EASE } },
+  };
+}
+
+/**
+ * Variants kartu saat berada di dalam wadah ber-stagger.
+ *
+ * Tanpa `initial`/`animate` sendiri: kartu ini MEWARISI label varians dari
+ * pembungkus halaman, dan itulah yang membuat `staggerChildren` bekerja — anak
+ * yang menyalakan `animate` sendiri keluar dari antrean stagger.
+ */
+export const CARD_VARIANTS = {
+  hidden: { opacity: 0, y: 14 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.3, ease: EASE } },
+};
 
 /**
  * Muncul saat masuk viewport.

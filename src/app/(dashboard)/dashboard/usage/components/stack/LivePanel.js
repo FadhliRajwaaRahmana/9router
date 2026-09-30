@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fmtFull, fmtAgo, fmtExact } from "./format";
+import { fmtFull, fmtAgo, fmtExact, fmtWhole } from "./format";
+import AnimatedNumber from "./AnimatedNumber";
 
 /**
  * LivePanel — request yang sedang berjalan + request terakhir, realtime.
@@ -128,8 +129,10 @@ export default function LivePanel({ stats, nodeNames = {} }) {
                       pra-TTFT dari ukuran body, diganti angka asli begitu chunk
                       pertama ber-usage tiba. */}
                   <p className="text-xs tabular-nums text-text-main" title={a.inputEstimated ? "Estimated from request size — real count arrives with the first usage chunk" : fmtAgo(a.startedAt)}>
-                    <span className="text-text-muted">↓</span> {inEst}{fmtFull(a.inputTokens)}{" "}
-                    <span className="text-text-muted">↑</span> {fmtFull(a.outputTokens)}
+                    <span className="text-text-muted">↓</span> {inEst}
+                    <AnimatedNumber value={a.inputTokens} format={fmtWhole} />{" "}
+                    <span className="text-text-muted">↑</span>{" "}
+                    <AnimatedNumber value={a.outputTokens} format={fmtWhole} />
                   </p>
                   <p className="text-[0.6875rem] tabular-nums text-text-subtle">
                     {a.startedAt ? (
@@ -177,7 +180,7 @@ export default function LivePanel({ stats, nodeNames = {} }) {
                 ) : null}
               </div>
               <p className="shrink-0 text-xs tabular-nums text-text-muted" title={fmtFull(r.totalTokens)}>
-                {fmtFull(r.totalTokens)} tok
+                <AnimatedNumber value={r.totalTokens} format={fmtWhole} /> tok
               </p>
               <p className="w-16 shrink-0 text-right text-[0.6875rem] tabular-nums text-text-subtle">
                 <time dateTime={r.timestamp} title={`${fmtExact(r.timestamp)} — ${fmtAgo(r.timestamp)}`}>

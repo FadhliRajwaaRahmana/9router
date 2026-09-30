@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
+import AnimatedNumber from "./AnimatedNumber";
 
 /**
  * Lapis — unit dasar struktur halaman Usage.
@@ -22,7 +23,11 @@ export default function Layer({
   title,
   meta,              // ringkasan singkat yang tetap terlihat saat tertutup
   count,             // angka di ujung kanan — rata kanan, lebar tetap
+  countValue,        // nilai mentah untuk angka itu; dipakai agar bisa beranimasi
+  countFormat,       // (nilai) → string, pasangan `countValue`
   countSecondary,    // nilai pendamping di mode "Cost + Tokens"; null di mode lain
+  countSecondaryValue,   // nilai mentah pendamping
+  countSecondaryFormat,  // pemformat pendamping
   accent = false,    // garis lipatan oranye: menandai lapis yang punya isu
   depth = 0,         // tingkat indentasi; menambah garis lipatan di kiri
   folded = false,    // gambar garis lipatan tipis di atas kepala lapis ini
@@ -121,11 +126,27 @@ export default function Layer({
                     kolom paling kanan, dan karena itu tidak bergeser saat mode
                     berganti. */}
                 {countSecondary ? (
-                  <span className="text-xs tabular-nums text-text-subtle">{countSecondary}</span>
+                  countSecondaryValue != null && countSecondaryFormat ? (
+                    <AnimatedNumber
+                      value={countSecondaryValue}
+                      format={countSecondaryFormat}
+                      className="text-xs tabular-nums text-text-subtle"
+                    />
+                  ) : (
+                    <span className="text-xs tabular-nums text-text-subtle">{countSecondary}</span>
+                  )
                 ) : null}
-                <span className="min-w-[4.5rem] text-right text-sm font-medium tabular-nums text-text-main">
-                  {count}
-                </span>
+                {countValue != null && countFormat ? (
+                  <AnimatedNumber
+                    value={countValue}
+                    format={countFormat}
+                    className="min-w-[4.5rem] text-right text-sm font-medium tabular-nums text-text-main"
+                  />
+                ) : (
+                  <span className="min-w-[4.5rem] text-right text-sm font-medium tabular-nums text-text-main">
+                    {count}
+                  </span>
+                )}
               </span>
             ) : null}
           </span>
@@ -167,7 +188,11 @@ export function LayerRow({
   label,
   sublabel,
   value,
+  valueRaw,          // nilai mentah; kalau ada, angkanya BERJALAN ke nilai baru
+  valueFormat,       // (nilai) → string, pasangan `valueRaw`
   valueSecondary,    // angka kedua di mode "Cost + Tokens"; null di mode lain
+  valueSecondaryRaw,
+  valueSecondaryFormat,
   detail,            // keterangan panjang di `title` (mis. rincian input/cached/output)
   barValue,          // 0-100; null = tidak ada dasar perhitungan, garis tidak digambar
   onSelect,
@@ -224,7 +249,15 @@ export function LayerRow({
           {/* Pendamping di kiri, nilai utama di kanan — sama seperti di kepala
               lapis, sehingga kolom angka utama tidak pernah berpindah tempat. */}
           {valueSecondary ? (
-            <span className="text-xs tabular-nums text-text-subtle">{valueSecondary}</span>
+            valueSecondaryRaw != null && valueSecondaryFormat ? (
+              <AnimatedNumber
+                value={valueSecondaryRaw}
+                format={valueSecondaryFormat}
+                className="text-xs tabular-nums text-text-subtle"
+              />
+            ) : (
+              <span className="text-xs tabular-nums text-text-subtle">{valueSecondary}</span>
+            )
           ) : null}
           {/* Angka ini bisa difokus KALAU punya rincian.
               Rincian yang hanya hidup di `title` tidak pernah muncul di
@@ -254,9 +287,20 @@ export function LayerRow({
             title={detail || undefined}
             aria-describedby={detail ? detailId : undefined}
           >
-            <span key={String(value)} className="value-fade text-sm font-medium tabular-nums text-text-main">
-              {value}
-            </span>
+            {valueRaw != null && valueFormat ? (
+              // Angka beranimasi: elemen ini TIDAK di-remount saat nilainya
+              // berubah. Remount akan me-reset posisi animasi ke nilai akhir,
+              // sehingga justru tidak ada yang bergerak.
+              <AnimatedNumber
+                value={valueRaw}
+                format={valueFormat}
+                className="text-sm font-medium tabular-nums text-text-main"
+              />
+            ) : (
+              <span key={String(value)} className="value-fade text-sm font-medium tabular-nums text-text-main">
+                {value}
+              </span>
+            )}
           </span>
           {detail ? (
             <span id={detailId} className="sr-only">

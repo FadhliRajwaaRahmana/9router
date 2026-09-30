@@ -46,6 +46,20 @@ export function fmtFull(n) {
 }
 
 /**
+ * `fmtFull` yang dipaksa BULAT.
+ *
+ * Dipakai untuk angka yang sedang dianimasikan. Di tengah animasi nilainya
+ * pecahan (mis. 1.234,56), dan `fmtFull` apa adanya akan mencetaknya sebagai
+ * "1,234.56" — token tidak pernah setengah, dan kolom angka yang tiba-tiba
+ * berdesimal terbaca seperti kesalahan data. Membulatkan di sini menjaga
+ * janji halaman ini: angka yang tampil selalu berupa token utuh.
+ */
+export function fmtWhole(n) {
+  const v = Number(n);
+  return (Number.isFinite(v) ? Math.round(v) : 0).toLocaleString("en-US");
+}
+
+/**
  * Token sebagai angka penuh: 16.042.831.295, bukan "16.0B".
  *
  * `fmtTokens` yang meringkas tetap dipakai di tempat yang lebarnya memang

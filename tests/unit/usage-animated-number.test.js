@@ -34,6 +34,12 @@ const MOD = resolve(
 const { easeOutCubic, interpolate, interpolateList, shouldAnimate, safeNumber } =
   await import(MOD);
 
+const FORMAT = resolve(
+  HERE,
+  "../../src/app/(dashboard)/dashboard/usage/components/stack/format.js",
+);
+const { fmtWhole, fmtFull } = await import(FORMAT);
+
 describe("easing", () => {
   it("mulai di 0 dan berakhir di 1", () => {
     expect(easeOutCubic(0)).toBe(0);
@@ -144,5 +150,31 @@ describe("nilai tak sah", () => {
     expect(safeNumber(3.69)).toBe(3.69);
     expect(safeNumber(-5)).toBe(-5);
     expect(safeNumber("42")).toBe(42);
+  });
+});
+
+describe("pemformatan token yang sedang beranimasi", () => {
+  it("fmtFull mencetak desimal di tengah animasi — itu sebabnya fmtWhole ada", () => {
+    // Bukan bug di fmtFull: ia memang untuk nilai final. Yang salah adalah
+    // memakainya untuk nilai antara.
+    expect(fmtFull(1234.567)).toBe("1,234.567");
+  });
+
+  it("fmtWhole selalu bulat, jadi token tidak pernah tampil setengah", () => {
+    expect(fmtWhole(1234.567)).toBe("1,235");
+    expect(fmtWhole(1234.4)).toBe("1,234");
+    expect(fmtWhole(0.9)).toBe("1");
+    expect(fmtWhole(0)).toBe("0");
+  });
+
+  it("fmtWhole memakai pemisah ribuan yang sama dengan fmtFull", () => {
+    expect(fmtWhole(16042831.295)).toBe(fmtFull(16042831));
+  });
+
+  it("nilai tak sah tidak pernah menjadi NaN di layar", () => {
+    expect(fmtWhole(NaN)).toBe("0");
+    expect(fmtWhole(undefined)).toBe("0");
+    expect(fmtWhole(Infinity)).toBe("0");
+    expect(fmtWhole("bukan angka")).toBe("0");
   });
 });

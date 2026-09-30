@@ -17,6 +17,7 @@ import {
   fmtFull,
   fmtCount,
   fmtTokenDetail,
+  fmtWhole,
   share,
   valueOfMode,
   PERIOD_LABELS,
@@ -369,6 +370,14 @@ export default function UsageStack({ period, stats, live = null, loading, onRetr
   const totalSecondaryFor = (layer) =>
     mode === "both" ? `${fmtFull(layer.totalTokens)} tok` : null;
 
+  // Pemformat untuk angka yang BERANIMASI. Dihitung sekali di sini supaya
+  // kepala lapis, tiap baris, dan panel live memakai aturan yang sama persis —
+  // token selalu bulat (`fmtWhole`), biaya selalu dua/empat desimal (`fmtCost`).
+  // Tanpa `fmtWhole`, token yang sedang berjalan akan tercetak berdesimal di
+  // tengah animasi dan terbaca seperti kesalahan data.
+  const valueFormat = mode === "tokens" ? fmtWhole : fmtCost;
+  const secondaryFormat = (v) => `${fmtWhole(v)} tok`;
+
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <StackHead
@@ -441,7 +450,11 @@ export default function UsageStack({ period, stats, live = null, loading, onRetr
               // membuat lipatannya terbaca.
               folded={i > 0}
               count={totalFor(layer)}
+              countValue={mode === "tokens" ? layer.totalTokens : layer.totalCost}
+              countFormat={valueFormat}
               countSecondary={totalSecondaryFor(layer)}
+              countSecondaryValue={mode === "both" ? layer.totalTokens : undefined}
+              countSecondaryFormat={mode === "both" ? secondaryFormat : undefined}
               meta={
                 layer.rows.length === 0
                   ? "no match"
@@ -484,6 +497,20 @@ export default function UsageStack({ period, stats, live = null, loading, onRetr
 const ROW_LIMIT = 8;
 const ROW_LIMIT_SEARCHING = 40;
 
+/**
+ * Berapa baris teratas yang angkanya IKUT beranimasi.
+ *
+ * Tiap angka yang beranimasi menjalankan `requestAnimationFrame`-nya sendiri
+ * selama ±0,5 dtk. Lapis dengan "Show all" bisa membuka ratusan baris, dan saat
+ * payload SSE tiba, ratusan loop itu berebut frame yang sama — persis beban yang
+ * diperingatkan di `useAnimatedNumber`. Di atas batas ini angkanya tetap benar
+ * dan tetap diperbarui, hanya saja melompat alih-alih berjalan.
+ *
+ * 24 cukup: baris ke-25 ke bawah hampir selalu di luar layar saat angkanya
+ * berubah.
+ */
+const ANIMATE_LIMIT = 24;
+
 function LayerBody({
   layer,
   dimension,
@@ -518,7 +545,7 @@ function LayerBody({
 
   return (
     <div className="flex min-w-0 flex-col">
-      {rows.map((row) => {
+      {rows.map((row, rowIndex) => {
         // Nama baris ini dipakai untuk label DAN untuk aria-label tombol
         // telusur, jadi dihitung sekali dan tidak bisa berbeda antara yang
         // terlihat dan yang dibacakan pembaca layar.
@@ -567,7 +594,11 @@ function LayerBody({
                           : row.provider || null
                   }
                   value={valueFor(row)}
+                  valueRaw={rowIndex < ANIMATE_LIMIT ? value : undefined}
+                  valueFormat={valueFormat}
                   valueSecondary={secondaryFor(row)}
+                  valueSecondaryRaw={rowIndex < ANIMATE_LIMIT ? row.tokens : undefined}
+                  valueSecondaryFormat={mode === "both" ? secondaryFormat : undefined}
                   // Rincian token di tooltip: angka di layar tetap satu nilai
                   // yang bisa dipindai, tapi pecahan input/cached/output harus
                   // terjangkau dari baris yang sama — kalau tidak, operator

@@ -1,3 +1,65 @@
+# v0.5.128 (2026-09-30) — 9router-imagefix
+
+## Fixes
+- **Smooth scroll (Lenis) praktis tidak berfungsi karena `lerp` terbalik.**
+  Opsinya disetel `lerp: 0.9`, padahal bawaan Lenis `0.1`. Pada Lenis, `lerp`
+  adalah PECAHAN jarak yang ditempuh per frame (`damp(x, y, lerp*60, dt)`), jadi
+  0.9 menempuh ~59% sisa jarak tiap frame — sekitar enam kali lebih "lari"
+  daripada bawaan. Hasilnya nyaris tak bisa dibedakan dari scroll asli, dan
+  itulah sebabnya efek halusnya tidak pernah terasa. Kini `lerp: 0.1`.
+
+- **Token yang sedang beranimasi sempat tercetak berdesimal.** Nilai antara
+  dianimasikan sebagai bilangan pecahan, lalu `fmtFull` apa adanya mencetaknya
+  sebagai `"1,234.567"`. Ditambahkan `fmtWhole()` — pembulatan khusus angka
+  yang sedang berjalan; token tidak pernah tampil setengah.
+
+## Features
+- **Stagger se-halaman.** `PageTransition` kini menjadi sumber
+  `staggerChildren`, dan `Card` mewarisi variansnya lewat `StaggerInheritContext`
+  baru. Sebelumnya tiap kartu menyalakan animasinya sendiri dengan `delay: 0`,
+  sehingga seisi halaman muncul serentak sebagai satu kedipan. Sekarang kartu
+  menyusul berurutan. Berlaku untuk semua halaman yang memakai `Card` tanpa
+  satu pun berkas halaman perlu diubah; di luar `PageTransition` (landing page,
+  kartu di dalam modal) `Card` tetap beranimasi sendiri seperti semula.
+
+- **Angka Usage beranimasi mulus saat bertambah.** Komponen `AnimatedNumber`
+  baru dipasang di `StackHead` (biaya/token besar, nilai pendamping, jumlah
+  request, rincian uncached/cached/output), kepala tiap `Layer`, nilai tiap
+  `LayerRow`, dan `LivePanel`. Nilai awal TIDAK pernah 0 — render pertama memakai
+  nilai akhir apa adanya, dan animasi hanya berjalan saat nilainya benar-benar
+  berubah (aliran SSE yang mengirim angka sama tidak memicu animasi sia-sia).
+
+- **Primitif gerak akhirnya terpakai di halaman utama.** Sebelumnya `Reveal`,
+  `Stagger`, `HoverLift`, `Magnetic`, `PageShell`, dan `CountUpOnView` hanya
+  didefinisikan dan tidak pernah di-import — kode mati, TIDAK ada halaman yang
+  memakainya. Kini:
+  - `PageShell` — kepala halaman Translator (dengan `titleClassName`,
+    `subtitleClassName`, dan `titleAs` baru agar bisa dipakai sebagai kepala
+    seksi tanpa mengubah rupa halaman) dan kepala seksi Combos.
+  - `Stagger` + `HoverLift` — daftar Skills.
+  - `Reveal` — kartu petunjuk dan kartu GitHub di Skills; kepala seksi MITM di
+    CLI Tools (yang kartunya juga memakai `HoverLift`).
+  - `HoverLift` — kartu Combo.
+
+  Sebelum ini GSAP hanya menggerakkan garis kemajuan gulir 2px — itu sebabnya
+  "GSAP tidak terasa": memang hampir tidak ada yang digerakkannya.
+
+- **`PageShell` menerima `titleAs`.** Tingkat judul bisa diturunkan (h1 → h2)
+  supaya primitif yang sama melayani kepala halaman maupun kepala seksi; header
+  global sudah menampilkan judul halaman, jadi seksi di dalamnya memakai h2.
+
+## Tests
+- `tests/unit/usage-animated-number.test.js` diperluas dengan pengujian
+  `fmtWhole`: token selalu bulat, memakai pemisah ribuan yang sama dengan
+  `fmtFull`, dan nilai tak sah tidak pernah menjadi `NaN` di layar. 21/21 lulus.
+
+## Verification
+- `npm run build` → exit 0, "Compiled successfully".
+- Artifact build memuat `lerp:.1`, `data-animated-number`, dan
+  `beforeChildren` — perbaikan benar-benar ikut terpaket.
+- ESLint bersih pada seluruh berkas yang diubah (dua error di `combos/page.js`
+  sudah ada sebelum perubahan ini — dikonfirmasi identik pada versi HEAD).
+
 # v0.5.127 (2026-09-30) — 9router-imagefix
 
 ## Fixes

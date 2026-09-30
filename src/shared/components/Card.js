@@ -2,6 +2,7 @@
 
 import { cn } from "@/shared/utils/cn";
 import { motion, useReducedMotion } from "motion/react";
+import { CARD_VARIANTS, useStaggerInherit } from "@/shared/motion/primitives";
 
 /**
  * Kartu — dipakai 69 berkas di seluruh dashboard.
@@ -22,6 +23,15 @@ import { motion, useReducedMotion } from "motion/react";
  * `hover` yang sudah ada (bayangan + border) TIDAK diganti — ia tetap CSS
  * transition seperti semula, karena mengubahnya menjadi animasi Motion berarti
  * mengubah perilaku yang sudah dipakai. Yang ditambahkan hanya kemunculannya.
+ *
+ * ── Stagger: kartu menyusul, bukan serentak ────────────────────────────────
+ *
+ * Saat berada di dalam `PageTransition`, kartu ini tidak menyalakan animasinya
+ * sendiri melainkan MEWARISI varians halaman (`CARD_VARIANTS`). Itu yang
+ * membuat sebaris kartu masuk berurutan alih-alih berkedip bersamaan — dan
+ * itulah bedanya "ada animasi" dengan "terasa hidup". Di luar wadah itu
+ * (landing page, kartu di dalam modal) ia tetap beranimasi sendiri seperti
+ * semula, sehingga tidak ada tempat yang kehilangan kemunculannya.
  */
 export default function Card({
   children,
@@ -39,6 +49,7 @@ export default function Card({
   ...props
 }) {
   const reduce = useReducedMotion();
+  const staggered = useStaggerInherit();
 
   const paddings = {
     none: "",
@@ -68,11 +79,24 @@ export default function Card({
     );
   }
 
+  // Di dalam halaman ber-stagger: mewarisi varians dari pembungkus halaman.
+  // Tidak ada `animate` sendiri — anak yang menyalakan `animate` keluar dari
+  // antrean `staggerChildren` milik leluhurnya.
+  if (staggered) {
+    return (
+      <motion.div initial="hidden" variants={CARD_VARIANTS} className={kelas} {...props}>
+        <IsiKartu title={title} subtitle={subtitle} icon={icon} action={action}>
+          {children}
+        </IsiKartu>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.24, delay, ease: [0.2, 0.8, 0.2, 1] }}
+      transition={{ duration: 0.3, delay, ease: [0.2, 0.8, 0.2, 1] }}
       className={kelas}
       {...props}
     >

@@ -51,10 +51,16 @@ export function useSmoothScroll(ref, { enabled = true } = {}) {
     const lenis = new Lenis({
       wrapper: el,
       content: el.firstElementChild || el,
-      // Nilai yang sengaja konservatif: 1.0 terasa seperti meluncur di atas es,
-      // dan untuk dashboard kerja itu melelahkan. 0.9 cukup untuk terasa halus
-      // tanpa terasa lambat merespons.
-      lerp: 0.9,
+      // 0.1 = nilai bawaan Lenis, dan justru itu yang terasa "halus": tiap
+      // frame hanya menempuh ~10% sisa jarak, sehingga roda mouse terasa
+      // meluncur alih-alih menempel 1:1.
+      //
+      // Sebelumnya 0.9, dan itu terbalik dari yang dimaksud. Pada Lenis `lerp`
+      // adalah PECAHAN jarak yang ditempuh per frame (lihat `damp` di paket
+      // Lenis), jadi 0.9 menempuh ~59% sisa jarak tiap frame — sekitar enam
+      // kali lebih "lari" daripada bawaan. Hasilnya nyaris tak bisa dibedakan
+      // dari scroll asli, dan itulah kenapa smooth scroll-nya tidak terasa.
+      lerp: 0.1,
       wheelMultiplier: 1,
       touchMultiplier: 1.2,
       // Jangan menyerobot elemen yang memang menggulir sendiri (tabel 600 baris,

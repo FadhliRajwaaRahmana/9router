@@ -2,9 +2,9 @@
 
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
 import { useSmoothScroll } from "./usePageTransition";
-import { ScrollProgress } from "./primitives";
+import { ScrollProgress, StaggerInheritContext, pageVariants } from "./primitives";
 
 /**
  * Transisi antar-halaman + smooth scroll, dipasang SEKALI di layout.
@@ -31,9 +31,18 @@ import { ScrollProgress } from "./primitives";
  * Hanya opasitas dan geser 8px. Tidak ada skala, tidak ada blur: keduanya
  * memaksa repaint seluruh area dan pada tabel besar terasa tersendat.
  *
+ * ── Stagger: halaman muncul, lalu ISINYA menyusul ──────────────────────────
+ *
+ * Pembungkus ini juga sumber `staggerChildren` untuk seluruh halaman. `Card`
+ * yang berada di bawahnya mewarisi varians ini (lewat `StaggerInheritContext`),
+ * sehingga kartu pertama masuk ~20ms setelah halaman, kartu berikutnya 45ms
+ * kemudian, dan seterusnya. Sebelumnya tiap kartu menyalakan animasinya sendiri
+ * dengan `delay: 0`, jadi seisi halaman muncul serentak — terasa sebagai satu
+ * kedipan, bukan sebagai halaman yang tersusun.
+ *
  * `prefers-reduced-motion` dihormati lewat `useReducedMotion` — durasinya jadi
- * nol, bukan animasinya dihapus, sehingga tidak ada yang bergantung pada
- * selesainya sebuah transisi.
+ * nol dan stagger dimatikan, bukan animasinya dihapus, sehingga tidak ada yang
+ * bergantung pada selesainya sebuah transisi.
  */
 export function PageTransition({ children }) {
   const pathname = usePathname();
@@ -44,6 +53,10 @@ export function PageTransition({ children }) {
 
   const dur = reduce ? 0 : 0.22;
   const durOut = reduce ? 0 : 0.14;
+
+  // Identitas objek variants harus STABIL antar-render: objek baru tiap render
+  // membuat Motion menganggapnya definisi baru dan bisa memicu ulang animasi.
+  const variants = useMemo(() => pageVariants(reduce, dur, durOut), [reduce, dur, durOut]);
 
   return (
     <div className="relative flex-1 min-h-0 flex flex-col">
@@ -60,13 +73,19 @@ export function PageTransition({ children }) {
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key={pathname}
-            initial={{ opacity: 0, y: reduce ? 0 : 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: reduce ? 0 : -8 }}
-            transition={{ duration: dur, exit: { duration: durOut }, ease: [0.2, 0.8, 0.2, 1] }}
+            initial="hidden"
+            animate="show"
+            exit="exit"
+            variants={variants}
             className="min-h-full"
           >
-            {children}
+            {/* Seluruh isi halaman mewarisi izin ber-stagger. `Card` membaca
+                konteks ini dan, kalau boleh, masuk lewat varians alih-alih
+                menyalakan animasinya sendiri — itulah yang membuat kartu-kartu
+                menyusul berurutan alih-alih muncul serentak sebagai satu blok. */}
+            <StaggerInheritContext.Provider value={!reduce}>
+              {children}
+            </StaggerInheritContext.Provider>
           </motion.div>
         </AnimatePresence>
       </div>
