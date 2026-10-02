@@ -1,5 +1,59 @@
 # Changelog
 
+# v0.5.131 (2026-10-02) — 9router-imagefix
+
+## Sync upstream v0.5.95 (a99cf572)
+
+Seluruh fitur dan fix decolua/9router v0.5.95 diadopsi. Kustomisasi fork tetap utuh.
+
+### Features
+- **Provider**: Meta Muse (OAuth + katalog model), v1m System One, atria, dahl,
+  bai, tokenharbor, opencode-zen, qoder-cn — registry jadi 131 provider.
+- **GLM**: login Z.ai OAuth (dual-auth) di GLM Coding.
+- **Codex**: GPT-6.1 Sol, varian konteks 1M untuk GPT-6 dan GPT-5.6,
+  `gpt-daybreak-blue-latest`, `gpt-reserve`, dan routing slug telanjang
+  `gpt-5.x`/`gpt-6.x` ke codex.
+- **Claude**: Sonnet 5.5, plus `claude-opus-5.5` di registry Kiro.
+- **CLI**: perintah `connect` untuk server 9Router jarak jauh.
+- **Provider**: override header kustom per-provider dari registry.
+- **Agnes**: seed model 2.5/3.0.
+- **Usage**: parameter URL `?provider=` tersinkron dengan filter provider
+  (deep link bisa di-bookmark).
+- **Dashboard**: badge NEW dihapus, 9Remote ditandai HOT.
+
+### Fixes
+- **Claude**: prefill dari format non-`messages[]` dipertahankan; trailing user
+  turn dijaga supaya pembersihan tidak menghasilkan assistant prefill; tool
+  result akhir satu loop di-cache dengan breakpoint ke-4; Sonnet 5.x memakai
+  adaptive thinking tanpa placeholder palsu; blok `container_upload` dijaga.
+- **Thinking**: level `xhigh` ditambahkan ke claude-adaptive.
+- **Capabilities**: context window nyata GPT-6/GPT-5.4+ dan batas token combo;
+  alias vision `deepseek-v4-1-flash`; zed masuk katalog live.
+- **Responses**: menunggu usage nyata sebelum `response.completed`, dibatasi
+  watchdog 3 detik.
+- **Codex**: refresh token tidak lagi dipakai ulang (penyebab logout saat
+  auto-ping); hosted web search dipertahankan di GPT-6 Sol/Luna; model hantu
+  dibuang.
+- **Grok CLI**: mengirim versi 1.0.44 agar proxy berhenti membalas HTTP 426.
+- **Proxy**: fallback otomatis ke TLS insecure pada error self-signed;
+  `strictProxy` ditahan saat tidak ada proxy yang resolve.
+- **Translator**: `errorMessage` dan keyword non-standar dibuang dari schema
+  tool Gemini; tool bernama sama di-dedupe untuk model DeepSeek.
+- **Codebuddy**: error rate limit 6004 di-parse dan `resetsAtMs` diambil;
+  `recurring` diteruskan untuk quota pack codebuddy-intl.
+- **CLI Tools**: placeholder `sk_9router` diganti API key dashboard aktif pertama.
+- **Dashboard**: provider tersembunyi dikeluarkan dari daftar provider usage.
+
+### Kustomisasi fork yang dipertahankan
+- Halaman Usage Tumpukan Berlapis + panel Live + warna provider unik.
+- Layer animasi Motion + GSAP + Lenis sebagai primitif lintas halaman.
+- Menu `/dashboard/automation` lengkap.
+- Provider `freebuff` dan `meta-code` (registry, executor, usage, OAuth).
+- Fix image Antigravity: pivot claude→openai→gemini tetap meneruskan inlineData.
+- Rotasi host Antigravity, domain breaker, dan pool breaker (strike 429).
+- Fix angka Usage beku (i18n runtime) dan `x-connection-id`.
+- Batas pesan error 300 karakter, keep-alive dispatcher `proxyFetch`.
+
 # v0.5.130 (2026-09-30) — 9router-imagefix
 
 ## Fixes
