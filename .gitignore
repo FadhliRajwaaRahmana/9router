@@ -86,3 +86,7 @@ graphify-out/*
 .codegraph/
 .PR/
 .next-analyze/*
+
+# Build artifacts (npm pack)
+9router-imagefix-*.tgz
+.impeccable/
