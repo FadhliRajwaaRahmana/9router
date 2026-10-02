@@ -35,7 +35,7 @@ import uuid
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from gateway import AuthError, Gateway, GatewayError, load_cookies
+from gateway import AuthError, Gateway, GatewayError, TransportError, load_cookies
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -269,7 +269,7 @@ def _baseline(gw, session_id=None):
         evs = h.get("chat_events") or []
         if evs:
             return max((e.get("seq") or 0) for e in evs)
-    except (GatewayError, TimeoutError):
+    except (GatewayError, TransportError, TimeoutError):
         pass
     return 0
 
@@ -329,7 +329,7 @@ def _stream_turn(acc, prompt):
                 gw = acc.gateway()
                 yield from _stream_once(acc, gw, gen, prompt)
                 return
-            except (GatewayError, TimeoutError, OSError) as exc:
+            except (GatewayError, TransportError, TimeoutError, OSError) as exc:
                 acc.last_error = f"{type(exc).__name__}: {exc}"[:200]
                 acc.invalidate()
                 if attempt >= 1:
@@ -365,7 +365,7 @@ def _stream_once(acc, gw, gen, prompt):
 
         try:
             h = gw.call_json("chat.history", body={"limit": 10}, timeout=20)
-        except (GatewayError, TimeoutError):
+        except (GatewayError, TransportError, TimeoutError):
             time.sleep(CONFIG["poll_interval"])
             continue
 
@@ -490,8 +490,10 @@ async def chat_completions(request: Request, authorization: str = Header(None)):
             raise HTTPException(504, str(exc))
         except AuthError as exc:
             raise HTTPException(502, f"muse auth: {exc}")
-        except (GatewayError, TimeoutError, OSError) as exc:
+        except (GatewayError, TransportError, TimeoutError, OSError) as exc:
             raise HTTPException(502, f"muse gateway: {exc}")
+        except Exception as exc:  # noqa: BLE001 — never a blank 500; name the culprit
+            raise HTTPException(500, f"muse bridge internal: {type(exc).__name__}: {exc}")
         return JSONResponse({
             "id": cid, "object": "chat.completion", "created": int(time.time()),
             "model": model,
@@ -515,9 +517,14 @@ async def chat_completions(request: Request, authorization: str = Header(None)):
                                   "type": "authentication_error"}})
             yield "data: [DONE]\n\n"
             return
-        except (GatewayError, TimeoutError, OSError) as exc:
+        except (GatewayError, TransportError, TimeoutError, OSError) as exc:
             yield _sse({"error": {"message": f"muse gateway: {exc}",
                                   "type": "upstream_error"}})
+            yield "data: [DONE]\n\n"
+            return
+        except Exception as exc:  # noqa: BLE001 — same reasoning as the buffered path
+            yield _sse({"error": {"message": f"muse bridge internal: {type(exc).__name__}: {exc}",
+                                  "type": "internal_error"}})
             yield "data: [DONE]\n\n"
             return
         yield _sse(_chunk(cid, model, {}, finish="stop"))

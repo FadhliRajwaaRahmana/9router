@@ -75,6 +75,17 @@ class GatewayError(RuntimeError):
         self.payload = payload
 
 
+class TransportError(RuntimeError):
+    """The WebSocket transport itself broke (reset, timeout, connect failure).
+
+    Deliberately separate from GatewayError: the socket dying is transient and
+    retryable (reconnect + try again), while a GatewayError carries a status
+    the server meant. curl_cffi raises CurlError here, which is NOT an
+    OSError subclass — catching (GatewayError, TimeoutError, OSError) alone
+    misses it and the raw exception escapes as an HTTP 500.
+    """
+
+
 def _hatch_headers(cookies, access_token=None):
     h = {
         "User-Agent": UA,
@@ -167,31 +178,49 @@ class Gateway:
     """One authenticated connection to the personal VM gateway."""
 
     def __init__(self, cookies, vm_id=None, access_token=None, hatch_token=None):
-        if vm_id is None:
-            vm_id = fetch_session_info(cookies)["vm_id"]
-        self.vm_id = vm_id
-        access_token = access_token or fetch_access_token(cookies)
-        hatch_token = hatch_token or fetch_hatch_token(cookies, access_token, vm_id)
-        url = (f"wss://{GATEWAY_HOST}/v1/noise?vm_id={vm_id}"
-               f"&auth_token={urllib.parse.quote(hatch_token, safe='')}")
-        self.ws = WebSocket()
-        # verify=True matters: curl_cffi's WebSocket.connect defaults to
-        # verify=None, which disables certificate verification outright.
-        self.ws.connect(url, impersonate="chrome", timeout=20, verify=True)
-        noise = NoiseConnection.from_name(b"Noise_XX_25519_AESGCM_SHA256")
-        noise.set_as_initiator()
-        noise.set_keypair_from_private_bytes(Keypair.STATIC, os.urandom(32))
-        noise.start_handshake()
-        self.ws.send_bytes(bytes(noise.write_message(b"")))
-        m2, _ = self.ws.recv()
-        noise.read_message(bytes(m2))
-        self.ws.send_bytes(bytes(noise.write_message(b"")))
-        if not noise.handshake_finished:
-            raise GatewayError(-1, "Noise handshake did not finish")
-        self.noise = noise
-        self.stream = 1
-        self._send_lock = threading.Lock()
-        self._recv_lock = threading.Lock()
+        # All network I/O here runs through curl_cffi, whose CurlError is NOT
+        # an OSError subclass. A dead socket during (re)connect must surface as
+        # TransportError (retryable) — never raw — or it escapes the retry
+        # logic in server.py and becomes a blank HTTP 500.
+        # AuthError/GatewayError pass through untouched: they carry meaning
+        # (expired cookies, VM restarting) that TransportError must not swallow.
+        self.ws = None
+        try:
+            if vm_id is None:
+                vm_id = fetch_session_info(cookies)["vm_id"]
+            self.vm_id = vm_id
+            access_token = access_token or fetch_access_token(cookies)
+            hatch_token = hatch_token or fetch_hatch_token(cookies, access_token, vm_id)
+            url = (f"wss://{GATEWAY_HOST}/v1/noise?vm_id={vm_id}"
+                   f"&auth_token={urllib.parse.quote(hatch_token, safe='')}")
+            self.ws = WebSocket()
+            # verify=True matters: curl_cffi's WebSocket.connect defaults to
+            # verify=None, which disables certificate verification outright.
+            self.ws.connect(url, impersonate="chrome", timeout=20, verify=True)
+            noise = NoiseConnection.from_name(b"Noise_XX_25519_AESGCM_SHA256")
+            noise.set_as_initiator()
+            noise.set_keypair_from_private_bytes(Keypair.STATIC, os.urandom(32))
+            noise.start_handshake()
+            self.ws.send_bytes(bytes(noise.write_message(b"")))
+            m2, _ = self.ws.recv()
+            noise.read_message(bytes(m2))
+            self.ws.send_bytes(bytes(noise.write_message(b"")))
+            if not noise.handshake_finished:
+                raise GatewayError(-1, "Noise handshake did not finish")
+            self.noise = noise
+            self.stream = 1
+            self._send_lock = threading.Lock()
+            self._recv_lock = threading.Lock()
+        except (AuthError, GatewayError):
+            raise
+        except Exception as exc:  # noqa: BLE001 — see comment above
+            if self.ws is not None:
+                try:
+                    self.ws.close()
+                except Exception:  # noqa: BLE001 — already dying, just clean up
+                    pass
+            raise TransportError(
+                f"connect failed: {type(exc).__name__}: {exc}") from exc
 
     # ── low-level framing ─────────────────────────────────────────────────
     def _send_envelope(self, service_id, frame_bytes):
@@ -199,15 +228,21 @@ class Gateway:
         chunk_id = struct.unpack("<q", os.urandom(8))[0]
         fr = NoiseTransportFrame(chunk_id=chunk_id, chunk_index=0, total_chunks=1,
                                  payload=outer.SerializeToString())
-        with self._send_lock:
-            self.ws.send_bytes(bytes(self.noise.encrypt(fr.SerializeToString())))
+        try:
+            with self._send_lock:
+                self.ws.send_bytes(bytes(self.noise.encrypt(fr.SerializeToString())))
+        except Exception as exc:  # noqa: BLE001 — curl_cffi errors are transport death
+            raise TransportError(f"send failed: {type(exc).__name__}: {exc}") from exc
 
     def _read_frame(self):
         # Serialized so two threads can never interleave recv/decrypt, which
         # corrupts the stateful Noise transport (fatal BAD_DECRYPT).
-        with self._recv_lock:
-            data, _flags = self.ws.recv()
-            pt = bytes(self.noise.decrypt(bytes(data)))
+        try:
+            with self._recv_lock:
+                data, _flags = self.ws.recv()
+                pt = bytes(self.noise.decrypt(bytes(data)))
+        except Exception as exc:  # noqa: BLE001 — same reasoning as _send_envelope
+            raise TransportError(f"recv failed: {type(exc).__name__}: {exc}") from exc
         ntf = NoiseTransportFrame()
         ntf.ParseFromString(pt)
         sr = ServiceResponse()
@@ -289,6 +324,7 @@ class Gateway:
 
     def close(self):
         try:
-            self.ws.close()
+            if self.ws is not None:
+                self.ws.close()
         except Exception:  # noqa: BLE001 — closing a dead socket is not an error
             pass
