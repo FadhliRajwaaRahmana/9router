@@ -1,5 +1,49 @@
 # Changelog
 
+# v0.5.138 (2026-10-03) — 9router-imagefix
+
+## Fix: provider `muse` (Meta Model API) menolak semua permintaan dengan 400
+
+Gejala: `/dashboard/providers/muse` menampilkan `HTTP 400: unknown parameter
+'input'` di bawah "Available Models", dan setiap permintaan ke model muse
+gagal — termasuk `muse-spark-1.3-contributor`.
+
+Penyebabnya body dan URL tidak sepakat soal format. Semua model `muse`
+di-pin ke `targetFormat: "openai-responses"`, tetapi `transport.baseUrl`
+menunjuk `/v1/chat/completions`. Guard per-model di `chatCore.js`
+menolak transport yang cocok `sourceFormat` ketika model hanya
+mendeklarasikan `openai-responses`, sehingga `modelTargetFormat` menang:
+body diterjemahkan ke bentuk Responses (`input[]`) lalu dikirim ke URL chat.
+
+Direproduksi langsung ke `api.meta.ai`:
+
+| Uji | Hasil |
+|---|---|
+| `/v1/responses` + body Responses | 200 |
+| `/v1/chat/completions` + body Responses | 400 `unknown parameter 'input'` |
+| `/v1/responses` + `max_tokens` | 400 `unknown parameter 'max_tokens'` |
+| `/v1/responses` + `reasoning_effort` top-level | 400 |
+| `/v1/responses` + `reasoning.effort` | 200 |
+
+Perbaikan menyamakan `muse` dengan `meta-code` yang sudah bekerja:
+`baseUrl` -> `/v1/responses`, `format` -> `openai-responses`,
+`forceStream: true`, dan `quirks.foldReasoningEffort`.
+
+Terverifikasi lewat server hasil build:
+non-stream -> 200 `"ok"`; stream + tools -> 200 dengan `tool_calls` terisi
+dan `finish_reason: "tool_calls"`. Jadi muse-spark kini juga bisa dipakai
+dari klien coding yang memakai tool calling.
+
+Catatan: `muse-ai` (agen personal, sidecar Python) tidak terpengaruh —
+provider itu terpisah dan sudah benar sejak awal.
+
+## Fix: `muse-bridge` mengembalikan HTTP 500 kosong saat soket gateway mati
+
+`curl_cffi` melempar `CurlError` yang **bukan** subclass `OSError`, sehingga
+handler `(GatewayError, TimeoutError, OSError)` melewatkannya dan FastAPI
+mengembalikan 500 tanpa pesan. Semua I/O jaringan kini dibungkus
+`TransportError`; transport mati = reconnect, bukan 500.
+
 # v0.5.132 (2026-10-02) — 9router-imagefix
 
 ## Provider baru: `muse-ai` (agen personal muse.ai)
