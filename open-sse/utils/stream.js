@@ -31,6 +31,11 @@ const STREAM_MODE = {
 // forever when the upstream stalls with no usage trailer and no [DONE].
 const PENDING_COMPLETION_FLUSH_MS = 3000;
 
+// Matches the OpenAI SSE sentinel anywhere in a chunk tail. A passthrough
+// stream forwards upstream bytes verbatim, so the terminator the upstream
+// already sent must be recognised before we add one of our own.
+const DONE_LINE_RE = /data:\s*\[DONE\]/;
+
 /**
  * Create unified SSE transform stream
  * @param {object} options
@@ -266,6 +271,11 @@ export function createSSEStream(options = {}) {
             }
           }
 
+          // An upstream terminator forwarded here is the client's [DONE]. Record
+          // it so flush does not append a second one: the line is consumed and
+          // dropped from `buffer`, so the flush-time check cannot see it.
+          if (DONE_LINE_RE.test(output)) streamDoneSent = true;
+
           reqLogger?.appendConvertedChunk?.(output);
           controller.enqueue(sharedEncoder.encode(output));
           // Responses clients (codex CLI) close on response.completed instead of [DONE]
@@ -445,6 +455,14 @@ export function createSSEStream(options = {}) {
             }
             reqLogger?.appendConvertedChunk?.(output);
             controller.enqueue(sharedEncoder.encode(output));
+
+            // The forwarded tail may already end with the sentinel. The upstream
+            // (e.g. the muse-ai bridge, and any OpenAI-compatible server) closes
+            // its stream with `data: [DONE]`, and passthrough forwards it
+            // verbatim — so emitting another one below would terminate the
+            // stream twice. Clients that log it show a duplicate; strict parsers
+            // may reject it. Track it instead of assuming the sentinel is ours.
+            if (DONE_LINE_RE.test(output.slice(-24))) streamDoneSent = true;
           }
 
           // IMPORTANT: In passthrough mode we still must terminate the SSE stream.
@@ -458,6 +476,9 @@ export function createSSEStream(options = {}) {
             reqLogger?.appendConvertedChunk?.(doneOutput);
             controller.enqueue(sharedEncoder.encode(doneOutput));
           }
+          // Mark it sent even when the branch above skipped it for a Gemini-family
+          // client, so no later flush appends a second terminator.
+          streamDoneSent = true;
 
           finalizeStream();
           return;
