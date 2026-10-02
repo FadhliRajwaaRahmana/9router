@@ -56,12 +56,13 @@ export function onLocaleChange(callback) {
 
 // Process text node
 function processTextNode(node) {
-  if (!node.nodeValue || !node.nodeValue.trim()) return;
-  
+  const current = node.nodeValue;
+  if (!current || !current.trim()) return;
+
   // Skip if parent is script, style, code, or structural elements
   const parent = node.parentElement;
   if (!parent) return;
-  
+
   // Skip if parent or any ancestor has data-i18n-skip attribute
   let element = parent;
   while (element) {
@@ -70,16 +71,16 @@ function processTextNode(node) {
     }
     element = element.parentElement;
   }
-  
+
   const tagName = parent.tagName?.toLowerCase();
-  
+
   // Skip elements that don't allow text nodes
   const skipTags = [
     "script", "style", "code", "pre",
     "colgroup", "table", "thead", "tbody", "tfoot", "tr",
     "select", "datalist", "optgroup"
   ];
-  
+
   if (skipTags.includes(tagName)) return;
 
   // React memakai ULANG text node saat re-render — hanya `nodeValue` yang

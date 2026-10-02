@@ -66,11 +66,15 @@ describe("MiMo v2.6", () => {
     for (const r of xiaomi.regions) expect(r.label).toBeTruthy();
   });
 
-  it("thinking levels v2.6 mencakup none..xhigh", () => {
+  it("thinking levels v2.6 mencakup low..xhigh", () => {
     const levels = getThinkingLevels("xiaomi-mimo", "mimo-v2.6-pro");
     if (levels) {
-      expect(levels).toContain("none");
+      // MiMo v2.6 tidak bisa mematikan thinking (caps.thinkingCanDisable false),
+      // jadi getThinkingLevels menyaring "none" keluar — jangan menuntutnya.
+      expect(levels).not.toContain("none");
+      expect(levels).toContain("low");
       expect(levels).toContain("high");
+      expect(levels).toContain("xhigh");
     }
     // Kalau caps.reasoning false, getThinkingLevels mengembalikan null —
     // itu sah, yang penting pola v2.6 terdaftar di sumber.

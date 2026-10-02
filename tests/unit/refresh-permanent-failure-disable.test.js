@@ -6,11 +6,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const updateProviderConnection = vi.fn(async () => true);
+// Adopt-latest-token lookup: checkAndRefreshToken re-reads the connection before
+// refreshing so a rotated refresh token is never reused (upstream fix for the
+// Codex logout-on-auto-ping bug). Returning null keeps each case on the
+// credentials it passed in.
+const getProviderConnectionById = vi.fn(async () => null);
 const refreshProviderCredentials = vi.fn();
 const shouldRefreshCredentials = vi.fn(() => true);
 
 vi.mock("../../src/lib/localDb.js", () => ({
   updateProviderConnection: (...args) => updateProviderConnection(...args),
+  getProviderConnectionById: (...args) => getProviderConnectionById(...args),
 }));
 
 vi.mock("../../open-sse/services/oauthCredentialManager.js", () => ({
@@ -31,6 +37,7 @@ function creds(overrides = {}) {
 describe("checkAndRefreshToken — permanent refresh failure disables the connection", () => {
   beforeEach(() => {
     updateProviderConnection.mockClear();
+    getProviderConnectionById.mockClear();
     refreshProviderCredentials.mockReset();
     shouldRefreshCredentials.mockReturnValue(true);
   });

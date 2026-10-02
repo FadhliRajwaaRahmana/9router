@@ -1,3 +1,5 @@
+# Changelog
+
 # v0.5.130 (2026-09-30) — 9router-imagefix
 
 ## Fixes
@@ -1559,6 +1561,9 @@ lalu 3 gate dilewati berurutan:
 - **i18n**: pt-BR expanded to 1132 terms
 
 ## Fixes
+- **Claude Code**: add Claude Fable 5.1 and advertise Claude Code 2.1.258 in
+  both the request header and billing identity; use its permanent adaptive-thinking
+  mode with `output_config.effort`
 - **Stream**: record usage when a client closes on the terminal event — the
   Responses API has no [DONE] sentinel, so codex closed the socket on
   `response.completed` and cancelled the reader before flush() ran its usage
@@ -1846,7 +1851,6 @@ lalu 3 gate dilewati berurutan:
 - **Alicode-intl**: split into Coding Plan + Model Studio providers
 - **Cursor**: HTTP/2 AgentService support + version bump 3.12.17
 - **Dashboard**: cut duplicate API/icon spam, lazy-load provider assets
-
 
 # v0.5.35 (2026-07-16)
 

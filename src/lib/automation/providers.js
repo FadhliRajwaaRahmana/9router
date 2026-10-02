@@ -54,6 +54,11 @@ export function getAutomationProvider(id) {
  * kategori, memanggilnya dengan challenge yang tidak ia harapkan membuat
  * permintaan device-code gagal dengan pesan dari upstream, bukan dari sini.
  */
+// Catatan: daftar ini harus tetap sama dengan noPkceDeviceProviders di
+// src/app/api/oauth/[provider]/[action]/route.js — test
+// unit/automation-device-flow.test.js mengunci kesamaan itu. "muse" dan "glm"
+// ikut masuk bersama upstream v0.5.95 (Meta Muse + Z.ai OAuth). Jangan taruh
+// komentar di dalam literal: helper test membaca isinya baris demi baris.
 export const NO_PKCE_DEVICE_PROVIDERS = new Set([
   "github",
   "kiro",
@@ -63,8 +68,11 @@ export const NO_PKCE_DEVICE_PROVIDERS = new Set([
   "codebuddy-cn",
   "codebuddy-intl",
   "qoder",
+  "qoder-cn",
   "grok-cli",
   "meta-code",
+  "muse",
+  "glm",
 ]);
 
 /**

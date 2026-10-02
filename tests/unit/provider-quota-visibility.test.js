@@ -3,6 +3,7 @@ import {
   filterQuotasByVisibility,
   getHiddenQuotaRows,
   parseQuotaData,
+  trimHiddenQuotaKeys,
 } from "@/app/(dashboard)/dashboard/usage/components/ProviderLimits/utils.js";
 
 describe("provider quota visibility", () => {
@@ -41,6 +42,21 @@ describe("provider quota visibility", () => {
 
     const visibility = {
       antigravity: { hidden: ["claude"] },
+    };
+    const visible = filterQuotasByVisibility("antigravity", quotas, visibility);
+    const hidden = getHiddenQuotaRows("antigravity", quotas, visibility);
+
+    expect(visible.map((q) => q.modelKey)).toEqual(["gemini"]);
+    expect(hidden.map((q) => q.modelKey)).toEqual(["claude"]);
+  });
+
+  it("trims stale or obsolete model keys", () => {
+    const quotas = parseQuotaData("antigravity", data);
+    const trimmed = trimHiddenQuotaKeys(["claude", "stale-model-xyz", "gemini-3.8-flash-low"], quotas);
+    expect(trimmed).toEqual(["claude"]);
+
+    const visibility = {
+      antigravity: { hidden: ["claude", "stale-model-xyz"] },
     };
     const visible = filterQuotasByVisibility("antigravity", quotas, visibility);
     const hidden = getHiddenQuotaRows("antigravity", quotas, visibility);

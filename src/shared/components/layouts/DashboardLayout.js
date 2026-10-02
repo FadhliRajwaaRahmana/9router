@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { useNotificationStore } from "@/store/notificationStore";
 import Sidebar from "../Sidebar";
@@ -37,6 +37,11 @@ export default function DashboardLayout({ children }) {
   const pathname = usePathname();
   const notifications = useNotificationStore((state) => state.notifications);
   const removeNotification = useNotificationStore((state) => state.removeNotification);
+
+  // Fork: blok preload "heavy usage charts" upstream dibuang. Halaman Usage di
+  // sini memakai Tumpukan Berlapis (components/stack), sementara UsageStats +
+  // UsageChart lama sengaja dihapus di rilis 0.5.117 — preload-nya hanya akan
+  // membuat webpack mengejar modul yang tidak ada.
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-bg">

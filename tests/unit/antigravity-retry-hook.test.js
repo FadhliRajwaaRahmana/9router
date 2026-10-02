@@ -240,8 +240,7 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
         ],
       },
     });
-    expect(await ag.computeRetryDelay(burst, 1)).toBe(163);
-  });
+    expect(await ag.computeRetryDelay(burst, 1)).toBe(163);  });
 
   it("buildHeaders matches official IDE stream headers", () => {
     ag._lastSessionId = "sess-123";

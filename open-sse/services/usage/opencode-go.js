@@ -92,6 +92,7 @@ export async function getOpenCodeGoUsage(apiKey = null, proxyOptions = null) {
       };
     }
 
+
     if (Object.keys(quotas).length === 0) {
       return {
         plan: "OpenCode Go",

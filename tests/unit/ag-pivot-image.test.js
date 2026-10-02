@@ -98,19 +98,28 @@ describe("pivot claude→openai→antigravity mempertahankan image", () => {
     const openai = claudeToOpenAIRequest(MODEL, claude, true);
     const toolMsg = openai.messages.find((m) => m.role === "tool");
     expect(toolMsg, "pesan tool tidak terbentuk").toBeTruthy();
+    // The OpenAI tool role is text-only, so the upstream translator lifts the
+    // image out of tool_result into the user turn that follows, tagged with the
+    // call it came from. The text half stays in the tool message.
+    expect(toolMsg.content, "teks tool_result hilang").toContain("berhasil dibaca");
+    const imageTurn = openai.messages.at(-1);
+    expect(imageTurn.role, "image harus di pesan user setelah tool").toBe("user");
     expect(
-      Array.isArray(toolMsg.content),
-      `tool_result image masih di-stringify: ${JSON.stringify(toolMsg.content).slice(0, 120)}`
+      imageTurn.content.some((b) => b.type === "image_url" && b.image_url?.url?.includes(PNG_B64)),
+      "image tool_result tidak diteruskan sebagai image_url di pesan user"
     ).toBe(true);
 
     const env = openaiToAntigravityRequest(MODEL, openai, true, CREDS);
+    // The image must still reach Gemini as inlineData — that is the fix this
+    // test exists to protect. It now arrives via the user turn rather than
+    // functionResponse.parts.
+    const inlineData = [];
+    for (const c of env.request?.contents || []) {
+      for (const p of c.parts || []) if (p.inlineData) inlineData.push(p.inlineData.data);
+    }
+    expect(inlineData, "image tidak sampai ke Gemini sebagai inlineData").toContain(PNG_B64);
     const fr = collectFunctionResponses(env);
     expect(fr.length, "functionResponse tidak terbentuk").toBeGreaterThan(0);
-    expect(
-      fr[0].parts?.length,
-      "image tool_result tidak masuk ke functionResponse.parts"
-    ).toBeGreaterThan(0);
-    expect(fr[0].parts[0].inlineData.data).toBe(PNG_B64);
     // Teks tetap ada di result.
     expect(JSON.stringify(fr[0].response)).toContain("berhasil dibaca");
   });
