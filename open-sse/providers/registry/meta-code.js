@@ -37,6 +37,20 @@ export default {
     quirks: { foldReasoningEffort: true },
     // Bearer accessToken||apiKey is the BaseExecutor default — no auth block needed.
     validateUrl: "https://api.meta.ai/v1/models",
+    // Model reasoning butuh lebih banyak waktu sebelum token pertama, jadi
+    // ambangnya lebih longgar daripada bai — dan itu memang disengaja.
+    //
+    // Diukur langsung ke api.meta.ai dengan konteks 45K token: first-byte
+    // 5,8-12,2 detik. Respons yang sah bisa lambat di sini, berbeda dengan
+    // bai yang sehatnya 2-4 detik. Memakai ambang bai (25 detik) di provider
+    // ini akan memutus permintaan yang sebenarnya sedang berjalan.
+    //
+    // noRetryTimeoutMs disamakan dengan timeoutMs karena alasan berbeda dari
+    // bai: pool-nya cuma SATU akun, jadi mengulang tidak memindahkan apa pun
+    // — ia hanya mengalikan waktu tunggu. 45 detik sekali lalu gagal jelas
+    // lebih baik daripada 3 x 45 detik sebelum menyerah.
+    timeoutMs: 45000,
+    noRetryTimeoutMs: 45000,
   },
   oauth: {
     deviceCodeUrl: "https://auth.meta.com/oidc/device/authorization/",
