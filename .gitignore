@@ -106,3 +106,9 @@ graphify-out/*
 start-dev-silent.cjs
 debug.log
 
+# Reverse-engineering scratch for the muse.ai bridge. Holds live muse.ai
+# session cookies and account tokens — never commit, never publish.
+# muse-bridge/ has its own .gitignore for the cookies it needs at runtime.
+_muse-re/
+_muse-cli-check/
+

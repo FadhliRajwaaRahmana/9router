@@ -1,5 +1,42 @@
 # Changelog
 
+# v0.5.132 (2026-10-02) — 9router-imagefix
+
+## Provider baru: `muse-ai` (agen personal muse.ai)
+
+Agen personal muse.ai (feed/goals/ideas) kini bisa dipakai dari 9router.
+Berbeda dari provider `muse` yang sudah ada — itu Meta Model API (Muse Spark,
+per token); ini agen personalnya.
+
+### Kenapa lewat sidecar Python
+Edge muse.ai hanya menerima TLS handshake yang menyerupai browser. Handshake
+Noise XX-nya sudah diport ke Node dan **cocok byte-per-byte** dengan referensi,
+tapi gateway tetap menutup koneksi ~220 ms setelah handshake. Yang membuat
+handshake identik berhasil hanya sidik jari TLS Chrome — dan Node tidak bisa
+memberikannya tanpa native addon. Jadi transport-nya ada di `muse-bridge/`
+(Python + curl_cffi), yang bicara OpenAI biasa di 127.0.0.1:18611.
+
+### Isi
+- `muse-bridge/` — server FastAPI (OpenAI-compatible), klien protokol Noise XX +
+  protobuf, README, contoh config. Bind 127.0.0.1 saja.
+- `open-sse/providers/registry/muse-ai.js` — provider, id unik (`muse-ai`, bukan
+  `muse`) supaya tidak bentrok dengan Meta Model API.
+- `open-sse/providers/capabilities.js` — `tools: false` untuk semua alias.
+  Agen ini tidak punya function calling; tanpa ini dashboard dan `/v1/models`
+  menjanjikan kemampuan yang tidak ada.
+- `tests/unit/muse-ai-bridge-live.test.js` — 5 tes registrasi selalu jalan;
+  1 tes giliran langsung di balik `MUSE_BRIDGE_LIVE=1`.
+
+### Batasan (jujur)
+Chat saja. Tanpa tool calling, tanpa vision, tanpa reasoning terpisah —
+jadi **bukan** pengganti model coding; pakai `meta-code` untuk itu.
+Angka contextWindow/maxOutput di model list adalah placeholder; muse.ai tidak
+mempublikasikan angkanya.
+
+### Catatan keamanan
+`_muse-re/` dan `_muse-cli-check/` (berisi cookies sesi muse.ai) ditambahkan ke
+`.gitignore`; `muse-bridge/` punya `.gitignore` sendiri untuk `cookies.txt`.
+
 # v0.5.131 (2026-10-02) — 9router-imagefix
 
 ## Sync upstream v0.5.95 (a99cf572)

@@ -190,6 +190,10 @@ const CODEX_EXTENDED_CAPS = { ...CODEX_GPT_56_DEFAULT_CAPS, contextWindow: 87200
 // the generic pattern rather than merging with it.
 const DEVIN_CLI_GPT_CAPS = { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 200000, maxOutput: 128000 };
 
+// muse.ai personal agent — text chat only, no function calling anywhere in the
+// stack. Placeholder limits: muse.ai publishes no context-window figures.
+const MUSE_AGENT_CAPABILITIES = { tools: false, vision: false, pdf: false, search: false, reasoning: false, thinkingFormat: null, contextWindow: 100000, maxOutput: 8192 };
+
 /**
  * Provider-specific capability overrides. Keyed by provider alias/id.
  */
@@ -318,6 +322,22 @@ export const PROVIDER_CAPABILITIES = {
   // Ollama Cloud is actually needed.
   "ollama": {
     "deepseek-v4.1-flash:cloud": { vision: true, reasoning: true, thinkingFormat: "deepseek", contextWindow: 1000000, maxOutput: 384000 },
+  },
+  // muse.ai personal agent (the feed/goals/ideas one — NOT the Meta `muse`
+  // Model API). It has no function calling: the reference implementation
+  // lists "emulated tool calling" as unstarted and warns the agent may
+  // refuse a tool schema outright, so this is a property of the backend,
+  // not a gap in the bridge. tools:false is what stops the dashboard and
+  // /v1/models from promising an ability the agent does not have.
+  // The limits are placeholders: muse.ai publishes no context figures.
+  // Keyed by model because PROVIDER_CAPABILITIES matches model ids, and
+  // every alias routes to the same agent, so they all carry the same floor.
+  "muse-ai": {
+    "muse-chat": MUSE_AGENT_CAPABILITIES,
+    "gpt-4o": MUSE_AGENT_CAPABILITIES,
+    "gpt-5": MUSE_AGENT_CAPABILITIES,
+    "claude-sonnet-4": MUSE_AGENT_CAPABILITIES,
+    "muse-video": MUSE_AGENT_CAPABILITIES,
   },
 };
 

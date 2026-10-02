@@ -133,6 +133,9 @@ import p130 from "./bai.js";
 import p131 from "./tinyfish.js";
 import p132 from "./v1m.js";
 import p133 from "./muse.js";
+// Fork: muse.ai personal agent via the local Python bridge. Separate id from
+// `muse` (Meta Model API) so the two never resolve to each other.
+import pMuseAi from "./muse-ai.js";
 // Fork: freebuff & meta-code tetap ada; p124/p125 di upstream dipakai
 // tokenharbor, jadi keduanya diberi nama eksplisit.
 import pFreebuff from "./freebuff.js";
@@ -270,6 +273,7 @@ export default [
   p131,
   p132,
   p133,
+  pMuseAi,
   pFreebuff,
   pMetaCode,
 ];
