@@ -20,10 +20,37 @@ Blok finish di `openai-to-claude.js` tidak punya penjaga, dan
 buffer dan mengirim `input_json_delta` yang sama lagi, sehingga klien menyusun
 `{"pattern":"**/*.cs"}{"pattern":"**/*.cs"}` — JSON tidak valid.
 
-Perbaikan memakai `state.finishReason` sebagai penanda sekali-jalan (field itu
-hanya diisi di blok tersebut). Diverifikasi tes unit: satu, dua, dan tiga
-finish_reason kini sama-sama menghasilkan satu delta valid dan satu
-`content_block_stop`.
+Perbaikan **pertama** memakai `state.finishReason` sebagai penanda sekali-jalan
+untuk seluruh blok. Itu menyembuhkan cline-free, tetapi **merusak** provider yang
+mengirim argumen pada chunk finish yang lebih akhir: `mc/muse-spark` mengirim
+finish_reason pada chunk KOSONG lebih dulu, lalu argumen menyusul di chunk
+berikutnya. Penjaga global menutup blok terlalu dini sehingga argumen tidak
+pernah terkirim.
+
+Terbukti dengan membandingkan dua build pada request identik:
+```
+20128 (tanpa penjaga)  -> text stop tool_start ARG stop END   (benar)
+21888 (dengan penjaga) -> text stop tool_start                (argumen hilang)
+```
+
+Perbaikan final memindahkan penjaga ke tingkat **per-tool**:
+`state.emittedToolArgs` mencegah argumen tool yang sama dikirim dua kali, dan
+`state.stoppedToolBlocks` memastikan tepat satu `content_block_stop` per blok.
+Finish yang berulang tetap memproses tool yang belum mengirim argumen.
+
+Dua pola yang sama-sama nyata di lapangan kini tertangani:
+```
+A. args SEBELUM finish, finish diulang (cline-free) -> 1 delta, 1 stop
+B. args PADA finish kedua (mc)                      -> 1 delta berisi argumen
+```
+
+Uji langsung ke provider (server uji 21999):
+```
+mc/muse-spark-1.3-contributor            3/3 OK   (sebelumnya 3/3 kosong)
+mc/muse-spark-1.3-contributor(none)      3/3 OK   (sebelumnya 3/3 kosong)
+cl/cline-free/muse-spark-1.3-contributor 3/3 OK
+oc/muse-spark-1.3-contributor-free       2/3 OK   (sisa isu terpisah)
+```
 
 ## Fix: suffix `(none)` pada muse-spark menghasilkan HTTP 400
 
