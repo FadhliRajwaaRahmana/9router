@@ -171,8 +171,16 @@ export const MODEL_CAPABILITIES = {
   "kimi-k2.7-code-highspeed": { vision: true, videoInput: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 262144, maxOutput: 65536 },
   // OpenCode Free Muse Spark — multimodal (text+image per models.dev meta/muse-spark)
   // via OpenAI Responses input_image; reasoning supports up to xhigh.
-  "muse-spark-1.2-contributor-free": { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
-  "muse-spark-1.3-contributor-free": { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
+  //
+  // thinkingCanDisable: false — Muse Spark is a reasoning model on Meta's side and
+  // the API rejects the disable attempt: asking for `(none)` used to emit
+  // `reasoning_effort: "none"`, and api.meta.ai answers
+  //   400 reasoning_effort 'none' is not supported ... Supported values:
+  //   [minimal, low, medium, high, xhigh, max]
+  // With the flag set, thinkingUnified clamps "none" to `minimal` instead
+  // (open-sse/translator/concerns/thinkingUnified.js:266-268), which Meta accepts.
+  "muse-spark-1.2-contributor-free": { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1048576, maxOutput: 131072 },
+  "muse-spark-1.3-contributor-free": { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1048576, maxOutput: 131072 },
   // OpenCode Free Union Alpha — multimodal (text+vision), 262K context, 131K max output
   "union-alpha": { vision: true, contextWindow: 262144, maxOutput: 131072 },
 };
@@ -525,7 +533,9 @@ export const PATTERN_CAPABILITIES = [
 
 
   // ── OpenCode Free Muse Spark (multimodal text+image; OpenAI Responses reasoning supports up to xhigh) ─
-  { pattern: "*muse*spark*",    caps: { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 } },
+  // thinkingCanDisable: false — Muse Spark is a reasoning model on Meta's side and
+  // api.meta.ai rejects `reasoning_effort: "none"` with HTTP 400. Clamp instead.
+  { pattern: "*muse*spark*",    caps: { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1048576, maxOutput: 131072 } },
   // ── Others ───────────────────────────────────────────────────────
   { pattern: "*hunyuan*",       caps: { reasoning: true, thinkingFormat: "hunyuan", contextWindow: 262144, maxOutput: 262144 } },
   { pattern: "hy3*",            caps: { reasoning: true, thinkingFormat: "hunyuan", contextWindow: 262144, maxOutput: 262144 } },
