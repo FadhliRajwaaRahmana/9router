@@ -410,8 +410,19 @@ export function openaiToClaudeResponse(chunk, state) {
     }
   }
 
-  // Finish
-  if (choice.finish_reason) {
+  // Finish.
+  //
+  // Guarded against being run twice. Some upstreams repeat `finish_reason` on
+  // more than one chunk (observed: cline-free/muse-spark-1.3-contributor emits
+  // a second terminal chunk carrying the same finish_reason). Without this,
+  // each pass re-reads `state.toolArgBuffers` — which is never cleared — and
+  // re-emits the same `input_json_delta`, so the client concatenates the
+  // arguments twice: `{"pattern":"**\/*.cs"}{"pattern":"**\/*.cs"}`. That is
+  // invalid JSON and surfaces as `InputValidationError ... could not be parsed
+  // as JSON`, or as an empty `{}` when the consumer drops the broken payload.
+  //
+  // `state.finishReason` doubles as the marker: it is only assigned here.
+  if (choice.finish_reason && !state.finishReason) {
     stopThinkingBlock(state, results);
     stopTextBlock(state, results);
 
