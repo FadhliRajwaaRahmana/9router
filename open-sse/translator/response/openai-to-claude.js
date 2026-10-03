@@ -412,31 +412,49 @@ export function openaiToClaudeResponse(chunk, state) {
 
   // Finish.
   //
-  // Guarded against being run twice. Some upstreams repeat `finish_reason` on
-  // more than one chunk (observed: cline-free/muse-spark-1.3-contributor emits
-  // a second terminal chunk carrying the same finish_reason). Without this,
-  // each pass re-reads `state.toolArgBuffers` — which is never cleared — and
-  // re-emits the same `input_json_delta`, so the client concatenates the
-  // arguments twice: `{"pattern":"**\/*.cs"}{"pattern":"**\/*.cs"}`. That is
-  // invalid JSON and surfaces as `InputValidationError ... could not be parsed
-  // as JSON`, or as an empty `{}` when the consumer drops the broken payload.
+  // Upstreams differ in WHERE the tool arguments arrive relative to
+  // `finish_reason`, and both orders are real:
   //
-  // `state.finishReason` doubles as the marker: it is only assigned here.
-  if (choice.finish_reason && !state.finishReason) {
+  //   A. cline-free/muse-spark-1.3-contributor — args come BEFORE finish, and
+  //      `finish_reason` is repeated on a second terminal chunk.
+  //   B. mc/muse-spark-1.3-contributor — the FIRST chunk carrying
+  //      `finish_reason` is empty, and the arguments only arrive on a LATER
+  //      chunk that also carries `finish_reason`.
+  //
+  // A single `!state.finishReason` guard around the whole block breaks B: the
+  // first (empty) finish latches the flag, the later chunk is skipped, and the
+  // client never receives the arguments at all — `tool_use` with `input:{}` and
+  // no `input_json_delta`.
+  //
+  // The duplication to prevent is per-tool: emitting the SAME tool's buffered
+  // args twice. Track that per tool index instead of once per response, so a
+  // repeat finish still flushes args that arrived after the first finish.
+  state.emittedToolArgs ??= new Set();
+  state.stoppedToolBlocks ??= new Set();
+
+  if (choice.finish_reason) {
     stopThinkingBlock(state, results);
     stopTextBlock(state, results);
 
     for (const [idx, toolInfo] of state.toolCalls) {
-      // Emit buffered + sanitized args as single delta before stop
+      // Emit buffered + sanitized args as single delta before stop.
+      // Guarded per tool: a repeated finish must not re-send the same args,
+      // but a LATER finish must still flush args that arrived after an earlier
+      // (empty) finish — see the order note above.
       const buffered = state.toolArgBuffers?.get(idx);
-      if (buffered) {
+      if (buffered && !state.emittedToolArgs.has(idx)) {
         const sanitized = sanitizeToolArgs(toolInfo.name, buffered);
+        state.emittedToolArgs.add(idx);
         results.push({
           type: "content_block_delta",
           index: toolInfo.blockIndex,
           delta: { type: "input_json_delta", partial_json: sanitized }
         });
       }
+      // Exactly one stop per block. A repeated finish would otherwise close the
+      // same index again; a strict client that pairs start/stop 1:1 rejects it.
+      if (state.stoppedToolBlocks.has(idx)) continue;
+      state.stoppedToolBlocks.add(idx);
       results.push({
         type: "content_block_stop",
         index: toolInfo.blockIndex
