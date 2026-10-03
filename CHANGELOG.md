@@ -1,5 +1,63 @@
 # Changelog
 
+# v0.5.139 (2026-10-03) — 9router-imagefix
+
+## Fix: argumen tool call muse-spark rusak (JSON dobel)
+
+Gejala di Claude Code: `InputValidationError: Bash was called with input that
+could not be parsed as JSON`, dan varian `required parameter 'command' is
+missing` ketika payload rusak dibuang menjadi `{}`. Terukur pada sesi nyata:
+**451 error**, dan **80,8% tool_use muse-spark tanpa input** (506 dari 626),
+sementara model yang sama lewat provider lain 0%.
+
+Akar masalah: beberapa upstream mengirim `finish_reason` di **lebih dari satu**
+chunk. Terbukti pada cline-free/muse-spark-1.3-contributor — stream berisi
+delta argumen, chunk terminal ber-usage, lalu chunk terminal **kedua** dengan
+finish_reason sama.
+
+Blok finish di `openai-to-claude.js` tidak punya penjaga, dan
+`state.toolArgBuffers` tidak pernah dibersihkan. Setiap lintasan membaca ulang
+buffer dan mengirim `input_json_delta` yang sama lagi, sehingga klien menyusun
+`{"pattern":"**/*.cs"}{"pattern":"**/*.cs"}` — JSON tidak valid.
+
+Perbaikan memakai `state.finishReason` sebagai penanda sekali-jalan (field itu
+hanya diisi di blok tersebut). Diverifikasi tes unit: satu, dua, dan tiga
+finish_reason kini sama-sama menghasilkan satu delta valid dan satu
+`content_block_stop`.
+
+## Fix: suffix `(none)` pada muse-spark menghasilkan HTTP 400
+
+Memilih `mc/muse-spark-1.3-contributor(none)` ditolak Meta:
+
+    reasoning_effort 'none' is not supported for model 'muse-spark-1.3-contributor'.
+    Supported values: [minimal, low, medium, high, xhigh, max]
+
+Capability muse-spark tidak menyetel `thinkingCanDisable`, jadi bernilai `true`
+lewat default dan thinkingUnified mengirim `"none"` apa adanya.
+
+Menandai `thinkingCanDisable: false` membuat `none` di-clamp ke `minimal` —
+mekanisme yang sudah ada dan dipakai kimi/glm/minimax. Diterapkan di entri model
+eksplisit dan pola `*muse*spark*`.
+
+## Catatan pengukuran: level reasoning bukan tuas percepatan
+
+Diuji semua level pada konteks ~31K token lewat 9router. Hasilnya **tidak
+stabil** antar putaran — variasi antrean Meta lebih besar daripada pengaruh
+level:
+
+| Level | Putaran 1 | Putaran 2 | Putaran 3 |
+|---|---|---|---|
+| low | 2,81s | 5,22s | 4,98s |
+| medium | 4,18s | 4,05s | 6,26s |
+| high | 3,18s | 3,58s | 4,08s |
+| xhigh | 4,21s | 3,70s | 4,06s |
+
+`(xhigh)` paling konsisten (3,7-4,2 dtk) dan **tidak lebih lambat** dari level
+lain, jadi tidak ada alasan turun level demi kecepatan.
+
+Overhead 9router sendiri terukur **0-0,5 dtk** dan **tidak membesar** seiring
+konteks — kelambatan yang dirasakan berasal dari hulu Meta, bukan dari routing.
+
 # v0.5.138 (2026-10-03) — 9router-imagefix
 
 ## Fix: provider `muse` (Meta Model API) menolak semua permintaan dengan 400
