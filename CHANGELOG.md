@@ -1,5 +1,61 @@
 # Changelog
 
+# v0.5.141 (2026-10-05) — 9router-imagefix
+
+## Model baru: Claude Sonnet 5.5 & Opus 5.5 di Antigravity
+
+Port dari PR upstream #4566 (lmortezal). Antigravity mengekspos tiap family
+dalam 4 tier thinking (`base`, `low`, `medium`, `high`):
+
+```
+claude-sonnet-5-5  claude-sonnet-5-5-low  claude-sonnet-5-5-medium  claude-sonnet-5-5-high
+claude-opus-5-5    claude-opus-5-5-low    claude-opus-5-5-medium    claude-opus-5-5-high
+```
+
+Suffix `(level)` pada `upstreamModelId` adalah override thinking 9router —
+diselesaikan ke request lalu dilepas lagi sebelum panggilan Google Cloud Code.
+
+### File yang diubah
+
+| File | Isi |
+|---|---|
+| `open-sse/providers/registry/antigravity.js` | 8 entri model + `upstreamModelId` |
+| `open-sse/providers/capabilities.js` | 10 entri (Sonnet 5.5 termasuk `thinkingOffType: between_tools` + `forcedToolChoice: false`) |
+| `open-sse/providers/pricing.js` | 10 entri (Sonnet $2/$10, Opus $5/$25) |
+| `src/mitm/config.js` | sinonim titik/strip + 8 pola regex, diurutkan SEBELUM fallback 4.6 |
+| `src/shared/constants/cliTools.js` | `modelAliases` + `defaultModels` |
+| `open-sse/services/usage/google.js` | `importantModels` untuk pelacakan kuota |
+| `cli/src/cli/menus/providers.js` | menu CLI interaktif |
+
+Pola regex 5.5 wajib berada di atas `/opus/i` dan `/sonnet|claude/i` — kalau
+tidak, permintaan 5.5 akan diam-diam dirutekan ke model 4.6.
+
+### ⚠️ Belum bisa dipakai tanpa langganan Pro berbayar
+
+Model 5.5 **hanya untuk Google AI Pro non-trial**. Pro hasil trial/student/promo
+tidak mendapatkannya — ini keputusan Google, bukan batasan kode.
+
+Diverifikasi langsung ke `v1internal:fetchAvailableModels` pada dua akun di mesin
+pengembang: keduanya hanya menerima `claude-opus-4-6-thinking` dan
+`claude-sonnet-4-6`. Memanggil model 5.5 menghasilkan
+`404 Requested entity was not found` — bukan error kode.
+
+Pembanding yang membuktikan akun & koneksi sehat: `ag/claude-sonnet-4-6`
+dan `ag/claude-opus-4-6-thinking` menjawab normal (~2 detik). Model lama
+`ag/gemini-3.6-flash` juga 404 pada akun yang sama, jadi 404 bukan efek
+perubahan ini.
+
+Catatan jangka waktu: Sonnet 4.6 & Opus 4.6 **dihapus 2 Nov 2026** menurut
+dokumentasi Google, sehingga 5.5 menjadi satu-satunya jalur Claude di Antigravity
+setelah tanggal itu.
+
+### Verifikasi
+
+- `tests/unit/antigravity-claude-5-5.test.js` — 7/7 lulus (registry, upstream id
+  + strip thinking, capabilities, pricing, MITM alias/sinonim/pola).
+- Suite penuh: 1776 tes, 125 gagal — himpunan nama **identik** sebelum & sesudah
+  perubahan (0 regresi).
+
 # v0.5.139 (2026-10-03) — 9router-imagefix
 
 ## Fix: argumen tool call muse-spark rusak (JSON dobel)
