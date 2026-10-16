@@ -51,10 +51,13 @@ function isChatRequest(tool, req) {
 // Synonym map: rawModel from request → canonical alias key in mitmAlias DB
 const MODEL_SYNONYMS = {
   antigravity: {
-    "gemini-default": "gemini-3.5-flash-low",
-    "gemini-3.5-flash-high": "gemini-3-flash-agent",
-    "gemini-3.5-flash-medium": "gemini-3.5-flash-low",
-    "gemini-3.5-flash-extra-low": "gemini-3.5-flash-extra-low",
+    // Sync upstream v0.5.99: Gemini 3.5/3-flash sudah dihapus Google,
+    // MITM default dipindahkan ke 3.8-flash-medium.
+    "gemini-default": "gemini-3.8-flash-medium",
+    "gemini-3.5-flash-high": "gemini-3.8-flash-high",
+    "gemini-3.5-flash-medium": "gemini-3.8-flash-medium",
+    "gemini-3.5-flash-low": "gemini-3.8-flash-low",
+    "gemini-3.5-flash-extra-low": "gemini-3.8-flash-low",
     "gemini-3.8-flash": "gemini-3.8-flash-medium",
     "gemini-3.8-flash-high": "gemini-3.8-flash-high",
     "gemini-3.8-flash-medium": "gemini-3.8-flash-medium",
@@ -62,6 +65,9 @@ const MODEL_SYNONYMS = {
     "gemini-3.7-flash-high": "gemini-3.7-flash-high",
     "gemini-3.7-flash-medium": "gemini-3.7-flash-medium",
     "gemini-3.7-flash-low": "gemini-3.7-flash-low",
+    "gemini-3.6-flash-high": "gemini-3.6-flash-high",
+    "gemini-3.6-flash-medium": "gemini-3.6-flash-medium",
+    "gemini-3.6-flash-low": "gemini-3.6-flash-low",
     "gemini-3.1-pro-high": "gemini-pro-agent",
     "gemini-3-pro-high": "gemini-pro-agent",
     "gemini-3-pro-low": "gemini-3.1-pro-low",
@@ -96,9 +102,9 @@ const MODEL_SYNONYMS = {
 // Order matters: more specific patterns first. Catches AG renamed variants (e.g. gemini-pro-agent)
 const MODEL_PATTERNS = {
   antigravity: [
-    { match: /flash.*extra.*low|extra.*low.*flash|flash.*low|low.*flash/i, alias: "gemini-3.5-flash-extra-low" },
-    { match: /flash.*medium|medium.*flash/i,                       alias: "gemini-3.5-flash-low" },
-    { match: /flash.*agent|agent.*flash|flash/i,                   alias: "gemini-3-flash-agent" },
+    { match: /flash.*extra.*low|extra.*low.*flash|flash.*low|low.*flash/i, alias: "gemini-3.8-flash-low" },
+    { match: /flash.*medium|medium.*flash/i,                       alias: "gemini-3.8-flash-medium" },
+    { match: /flash.*agent|agent.*flash|flash/i,                   alias: "gemini-3.8-flash-high" },
     { match: /pro.*low|low.*pro/i,                                 alias: "gemini-3.1-pro-low" },
     { match: /gemini.*pro|pro.*gemini/i,                           alias: "gemini-pro-agent" },
     // Claude 5.5 tiers must be matched BEFORE the generic opus/sonnet fallbacks below,

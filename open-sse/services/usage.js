@@ -10,6 +10,7 @@ import { getCodexUsage, consumeCodexRateLimitResetCredit, getCodexRateLimitReset
 export { consumeCodexRateLimitResetCredit, getCodexRateLimitResetCredits, consumeClaudeResetGrant };
 import { getKiroUsage } from "./usage/kiro.js";
 import { getMiniMaxUsage } from "./usage/minimax.js";
+import { getMiniMaxCodeUsage } from "./minimaxCodeUsage.js";
 import { getCodeBuddyCnUsage, getCodeBuddyIntlUsage } from "./usage/codebuddy-cn.js";
 import { getGrokCliUsage } from "./usage/grok-cli.js";
 import { getKimiUsage } from "./usage/kimi.js";
@@ -22,6 +23,7 @@ import { getXiaomiMimoUsage } from "./usage/xiaomi-mimo.js";
 import { getFreebuffUsage } from "./usage/freebuff.js";
 import { getMetaCodeUsage } from "./usage/meta-code.js";
 import { getCommandCodeUsage } from "./usage/commandcode.js";
+import { getCursorUsage } from "./usage/cursor.js";
 import { resolveQoderCredentials } from "./qoderModels.js";
 import { getGlmUsage } from "./usage/glm.js";
 import {
@@ -53,6 +55,9 @@ const USAGE_HANDLERS = {
   "glm-cn": (c) => getGlmUsage(c.apiKey || c.accessToken, c.provider, c.proxyOptions),
   minimax: (c) => getMiniMaxUsage(c.apiKey, c.provider, c.proxyOptions),
   "minimax-cn": (c) => getMiniMaxUsage(c.apiKey, c.provider, c.proxyOptions),
+  // MiniMax Code (mcode) credits lane — signed account API + plan windows
+  "minimax-code": (c) => getMiniMaxCodeUsage(c),
+  "minimax-code-global": (c) => getMiniMaxCodeUsage(c),
   "vercel-ai-gateway": (c) => getVercelAiGatewayUsage(c.apiKey, c.proxyOptions),
   "codebuddy-cn": (c) => getCodeBuddyCnUsage(c.accessToken, c.apiKey, c.providerSpecificData, c.proxyOptions),
   "codebuddy-intl": (c) => getCodeBuddyIntlUsage(c.accessToken, c.apiKey, c.providerSpecificData, c.proxyOptions),
@@ -60,13 +65,14 @@ const USAGE_HANDLERS = {
   kimi: (c) => getKimiUsage(c.accessToken, c.apiKey, c.proxyOptions, c.providerSpecificData),
   "opencode-go": (c) => getOpenCodeGoUsage(c.apiKey, c.proxyOptions),
   deepseek: (c) => getDeepseekUsage(c.apiKey, c.proxyOptions),
+  groq: (c) => getGroqUsage(c.apiKey, c.proxyOptions),
+  "opencode-zen": (c) => getOpenCodeZenUsage(c.apiKey, c.proxyOptions),
+  "xiaomi-mimo": (c) => getXiaomiMimoUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
+  cursor: (c) => getCursorUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   freebuff: (c) => getFreebuffUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   zed: (c) => getZedUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   // refreshToken = Meta `dca:` token; the mint call that returns quota rejects plain keys.
   "meta-code": (c) => getMetaCodeUsage(c.refreshToken, c.proxyOptions, { force: c.force }),
-  "opencode-zen": (c) => getOpenCodeZenUsage(c.apiKey, c.proxyOptions),
-  groq: (c) => getGroqUsage(c.apiKey, c.proxyOptions),
-  "xiaomi-mimo": (c) => getXiaomiMimoUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   commandcode: (c) => getCommandCodeUsage(c.apiKey, c.proxyOptions),
 };
 

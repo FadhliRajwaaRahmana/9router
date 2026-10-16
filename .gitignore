@@ -111,4 +111,4 @@ debug.log
 # muse-bridge/ has its own .gitignore for the cookies it needs at runtime.
 _muse-re/
 _muse-cli-check/
-
+usage-period-report.txt

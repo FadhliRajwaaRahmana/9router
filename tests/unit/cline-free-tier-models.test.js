@@ -110,8 +110,8 @@ describe("cline-free namespace pricing", () => {
   it("still bills the paid twin at its published rate", async () => {
     const { getPricingForModel } = await import("../../open-sse/providers/pricing.js");
     expect(getPricingForModel("cline", "deepseek/deepseek-v4.1-flash").input).toBe(0.14);
-    // muse-spark-1.3-contributor publishes its own (cheap, non-zero) rate — the
-    // free namespace only zeroes the `cline-free/` variant.
+    // Fork menambahkan entri harga Muse Spark (upstream belum punya), jadi
+    // model ini HARGA-nya terisi — bukan null seperti di upstream.
     expect(getPricingForModel("cline", "meta/muse-spark-1.3-contributor").input).toBe(0.10);
   });
 

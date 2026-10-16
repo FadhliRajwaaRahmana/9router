@@ -64,27 +64,27 @@ export default {
     clientSecret: "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",
   },
   models: [
-    // 3.7/3.8 expose ONLY the `-tiered` upstream id (verified live against
-    // v1internal:fetchAvailableModels): `gemini-3.8-flash-high` 404s, while
-    // `gemini-3.8-flash-tiered` + thinkingConfig.thinkingLevel = 200. The tier is
-    // carried by the "(level)" suffix, which stripThinkingSuffix removes from body.model.
-    { id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)", upstreamModelId: "gemini-3.8-flash-tiered(high)" },
-    { id: "gemini-3.8-flash-medium", name: "Gemini 3.8 Flash (Medium)", upstreamModelId: "gemini-3.8-flash-tiered(medium)" },
-    { id: "gemini-3.8-flash-low", name: "Gemini 3.8 Flash (Low)", upstreamModelId: "gemini-3.8-flash-tiered(low)" },
-    // Default entry: no tier suffix, so it resolves to the medium upstream id.
-    { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", upstreamModelId: "gemini-3.8-flash-tiered(medium)" },
+    // Upstream v0.5.99/v0.5.104 membuang id `-tiered` dan kembali ke id polos
+    // per-tier (`gemini-3.8-flash-high` dst). Catatan fork sebelumnya
+    // ("`gemini-3.8-flash-high` 404s, hanya `-tiered` yang 200") diukur 10 Sep
+    // 2026; Google menggantinya lagi setelah itu, jadi id upstream dipakai.
+    { id: "gemini-4-argon-high", name: "Gemini 4 Argon (High)", upstreamModelId: "gemini-4-argon-high(high)" },
+    { id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)", upstreamModelId: "gemini-3.8-flash-high(high)" },
+    { id: "gemini-3.8-flash-medium", name: "Gemini 3.8 Flash (Medium)", upstreamModelId: "gemini-3.8-flash-medium(medium)" },
+    { id: "gemini-3.8-flash-low", name: "Gemini 3.8 Flash (Low)", upstreamModelId: "gemini-3.8-flash-low(low)" },
+    { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", upstreamModelId: "gemini-3.8-flash-medium(medium)" },
     { id: "gemini-3.7-flash-high", name: "Gemini 3.7 Flash (High)", upstreamModelId: "gemini-3.7-flash-tiered(high)" },
     { id: "gemini-3.7-flash-medium", name: "Gemini 3.7 Flash (Medium)", upstreamModelId: "gemini-3.7-flash-tiered(medium)" },
     { id: "gemini-3.7-flash-low", name: "Gemini 3.7 Flash (Low)", upstreamModelId: "gemini-3.7-flash-tiered(low)" },
     { id: "gemini-3.6-flash-high", name: "Gemini 3.6 Flash (High)", upstreamModelId: "gemini-3.6-flash-tiered(high)" },
     { id: "gemini-3.6-flash-medium", name: "Gemini 3.6 Flash (Medium)", upstreamModelId: "gemini-3.6-flash-tiered(medium)" },
     { id: "gemini-3.6-flash-low", name: "Gemini 3.6 Flash (Low)", upstreamModelId: "gemini-3.6-flash-tiered(low)" },
-    { id: "gemini-3.5-flash-high", name: "Gemini 3.5 Flash (High)" },
-    { id: "gemini-3-flash-agent", name: "Gemini 3.5 Flash (High)" },
-    { id: "gemini-3.5-flash-low", name: "Gemini 3.5 Flash (Medium)" },
-    { id: "gemini-3.5-flash-extra-low", name: "Gemini 3.5 Flash (Low)" },
-    { id: "gemini-pro-agent", name: "Gemini 3.1 Pro (High)" },
-    { id: "gemini-3.1-pro-low", name: "Gemini 3.1 Pro (Low)" },
+    // Upstream v0.5.99 menghapus 3.5/3-flash (model sudah ditarik Google) dan
+    // menggantinya dengan 3.1 pro-high. Entri tanpa upstreamModelId berarti
+    // id-nya dipakai apa adanya.
+    { id: "gemini-3.1-pro-high", name: "Gemini 3.1 Pro (High)", upstreamModelId: "gemini-pro-agent" },
+    { id: "gemini-pro-agent", name: "Gemini 3.1 Pro (High)", upstreamModelId: "gemini-pro-agent" },
+    { id: "gemini-3.1-pro-low", name: "Gemini 3.1 Pro (Low)", upstreamModelId: "gemini-3.1-pro-low(low)" },
     // Claude 5.5 — upstream exposes exactly 4 tiers per family (base + low/medium/high).
     // The `(level)` suffix on upstreamModelId is a 9router thinking override: it is
     // resolved into the request and stripped again before the Google Cloud Code call.
@@ -99,7 +99,6 @@ export default {
     { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Thinking)" },
     { id: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 (Thinking)" },
     { id: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)" },
-    { id: "gemini-3-flash", name: "Gemini 3 Flash", thinking: false },
     // Image generation models
     { id: "gemini-3.1-flash-image", name: "Gemini 3.1 Flash (Image)", kind: "image", imageGen: true, capabilities: ["textToImage"] },
   ],

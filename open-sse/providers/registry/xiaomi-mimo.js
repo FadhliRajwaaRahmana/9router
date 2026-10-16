@@ -27,12 +27,12 @@ export default {
       signupUrl: "https://mimo.xiaomimimo.com/desktop/invite/",
     },
   },
-  category: "apikey",
+  category: "oauth",
+  authModes: ["oauth", "apikey"],
+  hasOAuth: true,
   // Kunci bersifat per-cluster. MiMo Desktop mendeklarasikan lima region
   // (CN/SGP/AMS/RU/IN) — host dan sid mengikuti pola mimo-server-<kode> /
   // mimo<kode>. Region tak dikenal jatuh ke sgp.
-  //
-  // Sumber: upstream decolua/9router 910db749.
   regions: [
     { id: "cn", label: "China (中国大陆)" },
     { id: "sgp", label: "Singapore (新加坡)" },

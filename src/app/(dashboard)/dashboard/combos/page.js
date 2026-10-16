@@ -12,6 +12,7 @@ import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/sha
 import { aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
 import { PageShell } from "@/shared/motion/PageShell";
 import { HoverLift } from "@/shared/motion/primitives";
+import { aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -170,7 +171,7 @@ export default function CombosPage() {
       // Only LLM combos here - webSearch/webFetch combos belong to media-providers/web
       if (combosRes.ok) setCombos((combosData.combos || []).filter(c => !c.kind || c.kind === "llm"));
       if (providersRes.ok) {
-        setActiveProviders(providersData.connections || []);
+        setActiveProviders((providersData.connections || []).filter((c) => c.isActive !== false));
       }
       setComboStrategies(settingsData.comboStrategies || {});
       const rawAdapter = settingsData.capacityAdapter || {};

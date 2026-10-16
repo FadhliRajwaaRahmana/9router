@@ -98,8 +98,10 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
 
   it("registry uses the daily IDE cloudcode host and user agent", () => {
     // Host resmi IDE harus tetap PERTAMA (dipakai selama pool-nya sehat).
+    // Fork menambah 2 host sandbox untuk rotasi kapasitas; upstream hanya 1.
     expect(antigravity.transport.baseUrls[0]).toBe("https://daily-cloudcode-pa.googleapis.com");
-    expect(antigravity.transport.headers["User-Agent"]).toBe("antigravity/ide/2.11.0 darwin/arm64");
+    expect(antigravity.transport.baseUrls.length).toBeGreaterThanOrEqual(1);
+    expect(antigravity.transport.headers["User-Agent"]).toBe("antigravity/ide/2.22.0 darwin/arm64");
   });
 
   it("registry lists the sandbox capacity pools as fallback hosts", () => {
@@ -245,7 +247,7 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
   it("buildHeaders matches official IDE stream headers", () => {
     ag._lastSessionId = "sess-123";
     const h = ag.buildHeaders({ accessToken: "tok" }, true);
-    expect(h["User-Agent"]).toBe("antigravity/ide/2.11.0 darwin/arm64");
+    expect(h["User-Agent"]).toBe("antigravity/ide/2.22.0 darwin/arm64");
     expect(h["Content-Type"]).toBe("application/json");
     expect(h["Authorization"]).toBe("Bearer tok");
     expect(h).not.toHaveProperty("X-Machine-Session-Id");

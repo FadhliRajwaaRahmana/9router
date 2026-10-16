@@ -46,8 +46,8 @@ describe("antigravity retry (intentional change: no same-host retries, rotate ho
   // chatCore langsung memutar akun, dan AntigravityExecutor.shouldRetry
   // memutar host (daily -> sandbox), jadi menunggu backoff 2s+4s+8s di host
   // yang sudah mati kapasitasnya hanya membuang waktu.
-  it("429 attempts = 0", () => {
-    expect(antigravity.transport.retry["429"].attempts).toBe(0);
+  it("429 attempts = 2 (retry in-place di host yang sama, delay dari quotaResetDelay)", () => {
+    expect(antigravity.transport.retry["429"].attempts).toBe(2);
   });
   it("500 attempts = 0", () => {
     expect(antigravity.transport.retry["500"].attempts).toBe(0);
@@ -74,13 +74,13 @@ describe("OpenCode Free endpoint routing", () => {
 
   it("routes Muse Spark to /responses and every other model to /chat/completions", () => {
     const executor = new OpenCodeExecutor();
-    expect(executor.buildUrl(MUSE)).toBe("https://opencode.ai/zen/v1/responses");
-    expect(executor.buildUrl(`${MUSE}(xhigh)`)).toBe("https://opencode.ai/zen/v1/responses");
-    expect(executor.buildUrl("muse-spark-1.3-contributor-free")).toBe("https://opencode.ai/zen/v1/responses");
-    expect(executor.buildUrl("muse-spark-1.4-contributor-free")).toBe("https://opencode.ai/zen/v1/responses");
-    expect(executor.buildUrl("muse-spark-2.0-contributor-free(xhigh)")).toBe("https://opencode.ai/zen/v1/responses");
-    expect(executor.buildUrl("big-pickle")).toBe("https://opencode.ai/zen/v1/chat/completions");
-    expect(executor.buildUrl("hy3-free")).toBe("https://opencode.ai/zen/v1/chat/completions");
+    expect(executor.buildUrl(MUSE)).toBe("https://opencode.ai/inference/v1/responses");
+    expect(executor.buildUrl(`${MUSE}(xhigh)`)).toBe("https://opencode.ai/inference/v1/responses");
+    expect(executor.buildUrl("muse-spark-1.3-contributor-free")).toBe("https://opencode.ai/inference/v1/responses");
+    expect(executor.buildUrl("muse-spark-1.4-contributor-free")).toBe("https://opencode.ai/inference/v1/responses");
+    expect(executor.buildUrl("muse-spark-2.0-contributor-free(xhigh)")).toBe("https://opencode.ai/inference/v1/responses");
+    expect(executor.buildUrl("big-pickle")).toBe("https://opencode.ai/inference/v1/chat/completions");
+    expect(executor.buildUrl("hy3-free")).toBe("https://opencode.ai/inference/v1/chat/completions");
   });
 
   it("normalizes Chat token/thinking fields only for the Responses model", () => {
@@ -125,10 +125,12 @@ describe("OpenCode Free endpoint routing", () => {
     executor.transformRequest("big-pickle", body, true, {});
 
     const names = body.tools.map((t) => t.function.name).sort();
-    expect(names).toEqual(["bash", "glob", "grep", "read"]);
+    expect(names).toEqual(["read", "shell"]);
     for (const tool of body.tools) {
       expect(tool.type).toBe("function");
-      expect(tool.function.parameters).toEqual({ type: "object", properties: {} });
+      // v2: OpenCode's own definitions, not empty stubs — upstream matches them verbatim.
+      expect(tool.function.parameters.type).toBe("object");
+      expect(Object.keys(tool.function.parameters.properties).length).toBeGreaterThan(0);
     }
   });
 
@@ -145,8 +147,9 @@ describe("OpenCode Free endpoint routing", () => {
     executor.transformRequest("big-pickle", body, true, {});
 
     const names = body.tools.map((t) => t.function.name);
-    expect(names).toEqual(["my_tool", "bash", "glob", "grep", "read"]);
-    // Caller's own `bash` declaration must survive untouched, not be replaced.
+    // `bash` is not part of the v2 fingerprint set (read/shell), so the caller's
+    // own declaration stays verbatim and the two members are appended after it.
+    expect(names).toEqual(["my_tool", "bash", "read", "shell"]);
     expect(body.tools[1].function.description).toBe("punyaku");
   });
 
@@ -156,7 +159,7 @@ describe("OpenCode Free endpoint routing", () => {
     executor.transformRequest("muse-spark-1.3-contributor-free", body, true, {});
 
     const names = body.tools.map((t) => t.name).sort();
-    expect(names).toEqual(["bash", "glob", "grep", "read"]);
+    expect(names).toEqual(["read", "shell"]);
     for (const tool of body.tools) {
       expect(tool.type).toBe("function");
       expect(tool.function).toBeUndefined(); // flat shape, not nested

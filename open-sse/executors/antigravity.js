@@ -159,6 +159,41 @@ export class AntigravityExecutor extends BaseExecutor {
     }
   }
 
+  // Parse Antigravity quota error to extract precise resetsAtMs from ErrorInfo/RetryInfo
+  parseError(response, bodyText) {
+    if ((response.status === 429 || response.status === 409) && bodyText) {
+      try {
+        const json = JSON.parse(bodyText);
+        const err = json?.error;
+        let resetsAtMs = null;
+        const details = Array.isArray(err?.details) ? err.details : [];
+        for (const d of details) {
+          if (d?.metadata?.quotaResetTimeStamp) {
+            const ms = new Date(d.metadata.quotaResetTimeStamp).getTime();
+            if (!isNaN(ms) && ms > Date.now()) {
+              resetsAtMs = ms;
+              break;
+            }
+          }
+          if (typeof d?.retryDelay === "string") {
+            const sec = parseFloat(d.retryDelay);
+            if (!isNaN(sec) && sec > 0) {
+              const ms = Date.now() + Math.round(sec * 1000);
+              if (ms > Date.now()) {
+                resetsAtMs = ms;
+                break;
+              }
+            }
+          }
+        }
+        if (resetsAtMs) {
+          return { status: response.status, message: err?.message || bodyText, resetsAtMs };
+        }
+      } catch { /* fall through to default */ }
+    }
+    return super.parseError(response, bodyText);
+  }
+
   buildUrl(model, stream, urlIndex = 0) {
     const baseUrls = this.getBaseUrls();
     const baseUrl = baseUrls[urlIndex] || baseUrls[0];
@@ -390,16 +425,17 @@ export class AntigravityExecutor extends BaseExecutor {
         return p;
       });
 
+      // Fork: hindari object churn — hanya bikin objek baru kalau ada yang berubah.
       const partsChanged = parts?.length !== c.parts?.length || modifiedParts?.some((p, idx) => p !== c.parts[idx]);
       if (role !== c.role || partsChanged) {
         return {
           ...c, role,
-          parts: modifiedParts || parts,
+          parts: modifiedParts || parts || [],
         };
       }
       return c;
     });
-    const contents = normalizeGeminiContents(rawContents);
+    const contents = normalizeGeminiContents(rawContents, model);
 
     // Sanitize tool schemas and function names before sending to Antigravity.
     let tools = body.request?.tools;

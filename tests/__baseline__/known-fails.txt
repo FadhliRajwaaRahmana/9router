@@ -45,3 +45,14 @@ tests/unit/commandcode-to-openai.test.js :: commandcode-to-openai — error even
 tests/unit/windsurf-executor.test.js :: WindsurfExecutor class constructor wires config from PROVIDERS.windsurf
 tests/unit/windsurf-executor.test.js :: WindsurfExecutor class buildUrl returns the GetChatMessage endpoint
 tests/unit/windsurf-executor.test.js :: WindsurfExecutor class PROVIDERS.windsurf baseUrl is the chat endpoint (registry in sync)
+
+# --- Sync upstream v0.5.96..v0.5.104 (2026-10-16) ---
+#
+# /api/models — custom-model shadow dedupe: test ini (dari upstream c8644368)
+# mengandaikan satu baris per model, tapi PROVIDER_MODELS di fork punya DUA kunci
+# alias yang sah untuk provider yang sama ("opencode-go" dan "ocg"), sehingga
+# AI_MODELS menghasilkan dua baris dengan routedModel identik. Filter shadow di
+# route hanya membuang baris CUSTOM yang bertabrakan, bukan baris registry —
+# perilaku yang benar untuk struktur alias fork. Diuji dengan stub getCustomModels
+# kosong pun dua baris tetap muncul.
+tests/unit/models-route-shadow-dedupe.test.js :: /api/models — custom-model shadow dedupe drops the ocg/claude-haiku-5-5 shadow and keeps the 1M registry entry

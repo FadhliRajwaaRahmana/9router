@@ -59,6 +59,9 @@ export function getAutomationProvider(id) {
 // unit/automation-device-flow.test.js mengunci kesamaan itu. "muse" dan "glm"
 // ikut masuk bersama upstream v0.5.95 (Meta Muse + Z.ai OAuth). Jangan taruh
 // komentar di dalam literal: helper test membaca isinya baris demi baris.
+// Sync upstream v0.5.99: "nous" ditambahkan. Daftar ini WAJIB sama dengan
+// noPkceProviders di api/oauth/[provider]/[action]/route.js — dijaga
+// tests/unit/automation-device-flow.test.js.
 export const NO_PKCE_DEVICE_PROVIDERS = new Set([
   "github",
   "kiro",
@@ -73,6 +76,7 @@ export const NO_PKCE_DEVICE_PROVIDERS = new Set([
   "meta-code",
   "muse",
   "glm",
+  "nous",
 ]);
 
 /**

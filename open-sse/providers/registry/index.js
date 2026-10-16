@@ -140,6 +140,12 @@ import pMuseAi from "./muse-ai.js";
 // tokenharbor, jadi keduanya diberi nama eksplisit.
 import pFreebuff from "./freebuff.js";
 import pMetaCode from "./meta-code.js";
+// Upstream v0.5.99: provider baru (MiniMax Code, Bedrock, Nous).
+import pMinimaxCode from "./minimax-code.js";
+import pMinimaxCodeGlobal from "./minimax-code-global.js";
+import pBedrock from "./bedrock.js";
+import pBedrockXai from "./bedrock-xai.js";
+import pNous from "./nous.js";
 export default [
   p0,
   p1,
@@ -276,4 +282,9 @@ export default [
   pMuseAi,
   pFreebuff,
   pMetaCode,
+  pMinimaxCode,
+  pMinimaxCodeGlobal,
+  pBedrock,
+  pBedrockXai,
+  pNous,
 ];
