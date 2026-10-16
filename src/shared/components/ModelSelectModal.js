@@ -43,12 +43,6 @@ function useLiveProviderModels(isOpen, connectionIds, label) {
       setModels([]);
       return undefined;
     }
-    return map;
-  }, [activeProviders]);
-  const cursorConnectionIds = liveConnectionIdsByProvider.cursor;
-  const clineConnectionIds = liveConnectionIdsByProvider.cline;
-  const clinepassConnectionIds = liveConnectionIdsByProvider.clinepass;
-  const zedConnectionIds = liveConnectionIdsByProvider.zed;
 
     let cancelled = false;
     Promise.all(ids.map(async (connectionId) => {

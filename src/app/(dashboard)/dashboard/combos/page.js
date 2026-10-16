@@ -12,7 +12,6 @@ import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/sha
 import { aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
 import { PageShell } from "@/shared/motion/PageShell";
 import { HoverLift } from "@/shared/motion/primitives";
-import { aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
