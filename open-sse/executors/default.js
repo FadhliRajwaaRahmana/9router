@@ -9,6 +9,7 @@ import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 import { extractClaudeSessionIdFromUserId } from "../utils/claudeCloaking.js";
+import { addHeaders as addBuddyHeaders, isBuddyProvider } from "../utils/buddyRequestContext.js";
 
 // Auth header descriptors — derived from registry transport.auth, fallback to hardcoded defaults.
 const BEARER = { combined: true, header: "Authorization", scheme: "bearer" };
@@ -270,6 +271,13 @@ export class DefaultExecutor extends BaseExecutor {
     }
 
     if (stream) headers["Accept"] = "text/event-stream";
+
+    // CodeBuddy / WorkBuddy channel check: the official client sends a family of
+    // conversation/turn/message/trace headers, and the gateway refuses calls
+    // without them (HTTP 400, code 11128). Applied last so auth, proxy and
+    // registry headers above are preserved untouched.
+    if (isBuddyProvider(this.provider)) addBuddyHeaders(headers);
+
     return headers;
   }
 

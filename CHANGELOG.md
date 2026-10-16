@@ -1,5 +1,69 @@
 # Changelog
 
+# v0.5.143 (2026-10-16) — 9router-imagefix
+
+## Fix: CodeBuddy International ditolak HTTP 400 / code 11128
+
+Gejala di klien: `API Error: 400 [400]: {"code":11128,"msg":"request illegal",
+"displayMsg":{"en":"Request blocked. Please send it again"},
+"displayTips":{"en":"This call failed channel verification, possibly because it
+was not sent from an official client."}}`.
+
+Gateway CodeBuddy menjalankan pemeriksaan kanal pada setiap request. Panggilan
+yang terlihat bukan dari klien resmi ditolak. Klien resmi (ekstensi VS Code)
+mengirim keluarga header identitas; 9router hanya mengirim auth, jadi ditolak.
+
+**Menambahkan X-Conversation-Request-ID saja TIDAK cukup** — header yang benar
+benar hilang adalah **X-Conversation-ID**, yang berbeda dari ID turn. Terukur:
+setelah tujuh header turn/message/tracing ditambahkan, error tetap sama; baru
+setelah `X-Conversation-ID` ditambahkan request diterima.
+
+### Delapan header yang ditambahkan
+
+| Header | Perilaku |
+|---|---|
+| `X-Conversation-ID` | **STABIL** selama percakapan. Gateway memakainya untuk affinity routing + prefix-cache reuse, jadi tidak boleh berubah per turn/retry |
+| `X-Conversation-Request-ID` | Satu per TURN (aggregation key). Tetap saat retry/fallback akun |
+| `X-Conversation-Message-ID` | Baru setiap request outbound, termasuk retry |
+| `X-Root-Request-ID` | Sama dengan Request-ID |
+| `X-Trace-ID` | Passthrough inbound, fallback ke Request-ID |
+| `X-B3-TraceId` | 32 hex. Passthrough inbound valid (16/32 hex, bukan all-zero), selain itu acak. Stabil dalam turn |
+| `X-B3-SpanId` | 16 hex, baru setiap request outbound |
+| `X-B3-Sampled` | Inbound `"0"` dipertahankan, selain itu `"1"` |
+
+### Implementasi
+
+- `open-sse/utils/buddyRequestContext.js` (baru) — `createTurn`, `run`,
+  `addHeaders`, `isBuddyProvider`. Konteks disimpan di **AsyncLocalStorage**,
+  bukan field executor: request paralel berbagi satu objek executor, jadi state
+  instance akan menukar ID antar sesi.
+- `open-sse/executors/base.js` — `execute()` jadi wrapper: satu turn per
+  pemanggilan untuk provider buddy, lalu lanjut ke `_executeWithIdentity()`.
+  Turn bertahan di seluruh retry/fallback.
+- `open-sse/executors/default.js` — `addHeaders()` dipanggil paling akhir di
+  `buildHeaders`, setelah auth/proxy/registry, sehingga tidak ada yang tertimpa.
+- Berlaku untuk `codebuddy-intl` DAN `codebuddy-cn` (WorkBuddy).
+
+Conversation ID: prioritaskan inbound `X-Conversation-ID`, lalu resolver sesi
+existing `resolveSessionIdentity()` (client session → hash teks asisten →
+workspace → per-connection). Fallback per-connection **bukan** benar-benar
+conversation-scoped (dua sesi pada satu akun berbagi ID) — diterima karena
+gateway hanya butuh ID stabil, dan `connectionId` tetap akun-scoped sehingga
+tidak bocor antar akun.
+
+### Verifikasi
+
+- `tests/unit/buddy-request-context.test.js` — 8/8 lulus: bentuk kedelapan
+  header, konversasi stabil vs message/span berubah, passthrough inbound,
+  B3 all-zero ditolak, tanpa duplikasi kapitalisasi, 8 turn paralel tidak
+  bertukar ID, auth tidak tersentuh.
+- Live pada server build sendiri (port uji), HTTP 200 + `finish_reason: stop`:
+  `codebuddy-intl/claude-opus-4.7-1m` ("OK"), `codebuddy-intl/kimi-k2.7` ("OK."),
+  `codebuddy-cn/glm-5.3` ("OK").
+- Dua request berurutan dengan `X-Conversation-ID` yang sama: keduanya 200.
+- Tanpa regresi: `ag/claude-sonnet-4-6`, `ag/gemini-3.8-flash-high`,
+  `oc/deepseek-v4.1-flash-free`, `mc/muse-spark-1.3-contributor` semua 200.
+
 # v0.5.141 (2026-10-05) — 9router-imagefix
 
 ## Model baru: Claude Sonnet 5.5 & Opus 5.5 di Antigravity
