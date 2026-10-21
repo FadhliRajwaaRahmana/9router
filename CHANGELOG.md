@@ -1,5 +1,89 @@
 # Changelog
 
+# v0.5.145 (2026-10-21) — 9router-imagefix
+
+## Fix: gateway berhenti sendiri dan harus dinyalakan manual
+
+Gejala: 9Router berhenti tanpa pesan, tidak ada crash log baru, dan user harus
+menjalankan ulang sendiri. Tiga sebab terpisah, semuanya diperbaiki di sini.
+
+**1. Setiap peluncuran membunuh instance yang sedang berjalan.** Jalur startup
+selalu menjalankan `killAllAppProcesses()` lalu `killProcessOnPort()` sebelum
+spawn. `killAllAppProcesses` memindai seluruh `node.exe` dan `taskkill /F` apa
+pun yang cocok dengan `9router` + `cli.js`/`custom-server.js` — termasuk server
+yang sedang melayani. Kalau spawn berikutnya kalah balapan memperebutkan port,
+tidak ada proses yang tersisa. Komentar di `cli.js` sendiri sudah mencatat
+gejalanya ("dua proses saling membunuh"), tapi penambalnya hanya untuk jalur
+`--skip-kill`.
+
+Sekarang `isExistingInstanceHealthy()` menanyai `/api/version` lebih dulu. Bila
+sebuah instance sehat menjawab, CLI **tidak** membunuh apa pun: ia membuka
+dashboard dan masuk mode `attachOnly` (tray + menu tetap ada, tanpa child
+proses dan tanpa teardown).
+
+**2. Tidak ada handler error global.** `custom-server.js` tidak punya listener
+`uncaughtException`/`unhandledRejection`, jadi default Node berlaku: satu
+promise rejection yang tidak di-catch langsung mematikan gateway. Log produksi
+menunjukkan sumbernya rutin — `TOKEN_REFRESH ... failed` (4×), `Usage API ...
+refresh failed` (8×), retry xAI dengan refresh token invalid. Kedua event kini
+dicatat dan server tetap hidup.
+
+**3. `MAX_RESTARTS = 2`.** Dua crash beruntun dalam <30 detik mematikan fitur
+auto-restart sepenuhnya, jadi gangguan sesaat meninggalkan aplikasi mati sampai
+user meluncurkan ulang. Dinaikkan ke 10 dengan backoff berbatas; penghitung
+tetap direset setelah proses bertahan >30 detik.
+
+## Perbaikan lain
+
+- `--max-old-space-size=6144` meminta heap 6 GB pada mesin ber-RAM 7 GB, yang
+  mengubah pertumbuhan heap wajar menjadi swap thrash atau OOM kill dari OS.
+  Sekarang default 2048 MB (working set nyata ~150-400 MB), dapat ditimpa lewat
+  `NINEROUTER_HEAP_MB`.
+- `cleanup()` memanggil `process.kill(-server.pid)` di luar guard `if`, sehingga
+  shutdown tanpa child (mode attach) melempar. Kedua kill sekarang dijaga.
+- `attachServerEvents()` mengembalikan lebih awal saat tidak ada child.
+
+# v0.5.144 (2026-10-18) — 9router-imagefix
+
+## Fix: ClinePass model reasoning balas 500 "empty response content"
+
+Gejala di dashboard: model seperti `cline-pass/muse-spark-1.3-contributor` dan
+`cline-pass/glm-5.3` selalu gagal dengan
+
+```
+HTTP 503: [clinepass/...] [500]: {"error":"empty response content","success":false}
+```
+
+Dua sebab terpisah, keduanya diperbaiki di sini.
+
+**1. Budget completion terlalu kecil.** Model reasoning menghabiskan seluruh
+`max_tokens` untuk thinking lalu mengembalikan konten kosong, dan upstream Cline
+menerjemahkannya menjadi HTTP 500. Terukur live: `max_tokens` 32/64/512 → 500,
+2048+ → 200. `applyReasoningTokenFloor()` sekarang menaikkan budget ke
+`REASONING_TOKEN_FLOOR` (2048) untuk provider `cline`/`clinepass`. Nilai klien
+tidak pernah diturunkan, hanya dinaikkan bila di bawah floor.
+
+**2. Katalog ClinePass kosong.** Endpoint `/api/v1/models` tidak lagi menandai
+id dengan prefix `cline-pass/` — terukur 471 model, nol berprefix. Resolver lama
+memfilter prefix itu sehingga selalu menghasilkan daftar kosong dan jatuh ke
+katalog statis. Feed `ai/cline/recommended-models` masih membawa tier lengkap
+(`free`, `clinePass`, `clineCloud`, `recommended`), jadi resolver sekarang
+membacanya: 14 model ClinePass terdeteksi live.
+
+Tier `clinePass` sengaja TIDAK digabung ke provider `cline` biasa — kuotanya
+terpisah dari langganan, dan membocorkannya akan membuat login Cline memakai
+kuota langganan yang bukan miliknya.
+
+Registry statis `clinepass` diperluas dari 10 ke 18 model sebagai fallback
+offline. Terverifikasi 10/10 model membalas 200 dengan `max_tokens: 32`.
+
+## Catatan operasional
+
+`modelLock_*` pada koneksi tidak pernah dibersihkan otomatis. Satu kegagalan
+mengunci model dan semua percobaan berikutnya ditolak sebelum request keluar,
+sehingga error yang sama terus muncul meski upstream sudah sehat. Bila model
+terlihat "rusak permanen", hapus kunci `modelLock_<model>` pada baris koneksi.
+
 # v0.5.143 (2026-10-16) — 9router-imagefix
 
 ## Fix: CodeBuddy International ditolak HTTP 400 / code 11128

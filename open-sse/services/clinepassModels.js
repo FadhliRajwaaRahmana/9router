@@ -52,34 +52,61 @@ async function fetchClineRawModels(credentials) {
 }
 
 /**
- * Fetch ClinePass live model catalog from Cline's /models endpoint.
- * Returns only models with the cline-pass/ prefix.
+ * Fetch ClinePass live model catalog.
+ *
+ * Primary source is the recommended-models feed's `clinePass[]` tier: it is the
+ * only place `cline-pass/*` ids still appear (the /models catalog dropped the
+ * prefix). The /models catalog is still consulted first so any prefixed ids it
+ * happens to carry win on a shared id.
  *
  * @param {object} credentials - Connection credentials ({ accessToken, apiKey })
  * @returns {Promise<{ models: { id: string, name: string }[] } | null>}
  */
 export async function resolveClinepassModels(credentials) {
-  const rawList = await fetchClineRawModels(credentials);
-  if (!rawList) return null;
+  const [rawList, tiers] = await Promise.all([
+    fetchClineRawModels(credentials),
+    fetchClineFeedTiers(),
+  ]);
 
-  const models = rawList
-    .filter((m) => typeof m?.id === "string" && m.id.startsWith("cline-pass/"))
-    .map((m) => ({
-      id: m.id,
-      name: m.name || m.id,
-    }));
+  const byId = new Map();
+  for (const m of rawList || []) {
+    if (typeof m?.id === "string" && m.id.startsWith("cline-pass/")) {
+      byId.set(m.id, { id: m.id, name: m.name || m.id });
+    }
+  }
+  for (const m of tiers?.clinePass || []) {
+    if (!byId.has(m.id)) byId.set(m.id, m);
+  }
 
+  const models = Array.from(byId.values());
   return models.length ? { models } : null;
 }
 
 /**
- * Fetch Cline's recommended-models feed and return only its `free[]` tier.
- * Returns null on any failure — the free tier is additive, so a dead feed must
- * never take the /api/v1/models catalog down with it.
- * @param {{accessToken?: string, apiKey?: string}} credentials
- * @returns {Promise<{id: string, name: string}[] | null>}
+ * Normalize one tier array from the recommended-models feed to `{id, name}`.
+ * Drops entries without a usable id; returns [] for anything unexpected.
  */
-async function fetchClineFreeTierModels() {
+function toModelEntries(tier) {
+  if (!Array.isArray(tier)) return [];
+  return tier
+    .filter((m) => typeof m?.id === "string" && m.id.trim() !== "")
+    .map((m) => ({ id: m.id, name: m.name || m.id }));
+}
+
+/**
+ * Fetch Cline's recommended-models feed and return its tiers verbatim:
+ * `{ free, clinePass, clineCloud, recommended }`, each normalized to
+ * `{id, name}[]`. Returns null on any failure — every tier is additive, so a
+ * dead feed must never take a caller's catalog down with it.
+ *
+ * The feed is the ONLY source that still carries `cline-pass/` ids: the
+ * /api/v1/models catalog stopped tagging them (verified live 2026-10-18 —
+ * 471 models, zero with the prefix), which is why prefix-filtering the
+ * catalog yielded nothing.
+ *
+ * @returns {Promise<{free: object[], clinePass: object[], clineCloud: object[], recommended: object[]} | null>}
+ */
+async function fetchClineFeedTiers() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
@@ -93,12 +120,14 @@ async function fetchClineFreeTierModels() {
     if (!response.ok) return null;
 
     const json = await response.json();
-    const free = Array.isArray(json?.free) ? json.free : [];
-    if (!free.length) return null;
+    if (!json || typeof json !== "object") return null;
 
-    return free
-      .filter((m) => typeof m?.id === "string" && m.id.trim() !== "")
-      .map((m) => ({ id: m.id, name: m.name || m.id }));
+    return {
+      free: toModelEntries(json.free),
+      clinePass: toModelEntries(json.clinePass),
+      clineCloud: toModelEntries(json.clineCloud),
+      recommended: toModelEntries(json.recommended),
+    };
   } catch {
     return null;
   } finally {
@@ -125,12 +154,15 @@ export async function resolveClineModels(credentials) {
       name: m.name || m.id,
     }));
 
-  // Free tier: /api/v1/models lists no `cline-free/*` ids, so merge the feed's
-  // free[] in. First writer wins on a shared id, keeping the catalog's entry
-  // for anything the two sources agree on.
-  const freeTier = await fetchClineFreeTierModels();
+  // The catalog lists no `cline-free/*` ids, so merge the feed's free tier in.
+  // The `clinePass[]` subscription tier is deliberately NOT merged here: it is
+  // billed against a separate ClinePass quota, so leaking those ids into the
+  // plain `cline` provider would let a Cline login spend a subscription it does
+  // not own. resolveClinepassModels() is the only consumer of that tier.
+  // First writer wins on a shared id, keeping the catalog's entry.
+  const tiers = await fetchClineFeedTiers();
   const byId = new Map(models.map((m) => [m.id, m]));
-  for (const m of freeTier || []) {
+  for (const m of tiers?.free || []) {
     if (!byId.has(m.id)) byId.set(m.id, m);
   }
   const merged = Array.from(byId.values());

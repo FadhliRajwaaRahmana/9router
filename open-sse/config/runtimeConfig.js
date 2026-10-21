@@ -88,6 +88,14 @@ export const GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS = envMs("GEMINI_NATIVE_TTS_FETCH
 export const DEFAULT_MAX_TOKENS = 64000;
 export const DEFAULT_MIN_TOKENS = 32000;
 
+// Reasoning models that think before answering return HTTP 500
+// {"error":"empty response content"} from Cline when the completion budget is
+// smaller than the hidden thinking pass. Raise the floor, never lower it.
+// Verified live 2026-10-18: max_tokens 32 → 500, 2000 → 200 for
+// cline-pass/muse-spark-1.3-contributor and cline-pass/glm-5.3.
+export const REASONING_TOKEN_FLOOR = 2048;
+export const REASONING_TOKEN_PROVIDERS = new Set(["cline", "clinepass"]);
+
 export const TOKEN_SAVER_HEADER = "x-9router-token-saver";
 
 // Retry config for 429 responses (legacy - kept for backward compatibility)

@@ -4,6 +4,23 @@ const fs = require("fs");
 const crypto = require("crypto");
 const { pathToFileURL } = require("url");
 
+// A single unhandled rejection used to terminate the whole gateway: Node's
+// default for both events is exit-on-throw, and this file had no listeners.
+// Upstream faults (token refresh, usage probes, provider sockets) are routine
+// and must never take the server down — log them and keep serving. Real
+// startup failures still surface through the listen() error path.
+let fatalErrorLogged = 0;
+process.on("unhandledRejection", (reason) => {
+  fatalErrorLogged += 1;
+  const msg = reason && reason.stack ? reason.stack : String(reason);
+  console.error("[9router] unhandledRejection (server kept alive):", msg);
+});
+process.on("uncaughtException", (err) => {
+  fatalErrorLogged += 1;
+  const msg = err && err.stack ? err.stack : String(err);
+  console.error("[9router] uncaughtException (server kept alive):", msg);
+});
+
 const origCreate = http.createServer.bind(http);
 
 // Per-process secret proving x-9r-real-ip was stamped below rather than sent by the client.

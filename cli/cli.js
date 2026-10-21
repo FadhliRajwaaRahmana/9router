@@ -430,6 +430,32 @@ function killProxyByPidFile() {
 }
 
 // Kill any process on specific port
+// Is a healthy 9router already serving this port? When it is, the correct
+// action is to reuse it — NOT to kill it and race a fresh spawn. The old
+// startup path always ran killAllAppProcesses() + killProcessOnPort(), so
+// launching a second time murdered the running instance and, if the respawn
+// then failed (port not yet released, spawn error), left nothing running.
+// That is the "9router stopped by itself" symptom: no crash, no restart log.
+async function isExistingInstanceHealthy(port) {
+  // A port that answers our own health endpoint belongs to a live 9router.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2000);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/version`, {
+      signal: controller.signal,
+      headers: { accept: "application/json" },
+    });
+    if (!res.ok) return false;
+    const body = await res.json().catch(() => null);
+    // Any JSON with a version means the app answered, not some other service.
+    return Boolean(body && (body.version || body.currentVersion));
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function killProcessOnPort(port) {
   return new Promise((resolve) => {
     try {
@@ -584,9 +610,25 @@ const updatePromise = checkForUpdate();
 if (skipKill) {
   startServer(updatePromise);
 } else {
-  killAllAppProcesses(port)
-    .then(() => killProcessOnPort(port))
-    .then(() => startServer(updatePromise));
+  // Reuse a running instance instead of killing it. Without this guard every
+  // launch (shortcut, second terminal, tray relaunch) ran killAllAppProcesses()
+  // and taskkill'd the live server, then raced a respawn — leaving nothing up
+  // when the respawn lost the port. The menu still works: the user gets the
+  // "already running" path below and can open the dashboard.
+  isExistingInstanceHealthy(port).then((healthy) => {
+    if (healthy) {
+      console.log(`\n✅ 9Router sudah berjalan di http://localhost:${port}`);
+      console.log("   Membuka dashboard tanpa mematikan instance yang ada.\n");
+      openBrowser(url);
+      // Keep this CLI process alive as a thin companion (tray + menu) instead
+      // of spawning a second server that would fight over the port.
+      startServer(updatePromise, { attachOnly: true });
+      return;
+    }
+    killAllAppProcesses(port)
+      .then(() => killProcessOnPort(port))
+      .then(() => startServer(updatePromise));
+  });
 }
 
 // Logika menu tinggal di modul terpisah supaya bisa diuji tanpa menjalankan
@@ -621,10 +663,18 @@ async function showInterfaceMenu(latestVersion) {
   return resolveMenuAction(selected, latestVersion, pkg.version);
 }
 
-const MAX_RESTARTS = 2;
+// Two consecutive crashes used to disable restarts entirely, which is why a
+// transient upstream/network fault left the app dead until the user relaunched
+// it by hand. Ten attempts with capped exponential backoff rides out a bad
+// minute; the counter still resets after a stable run.
+const MAX_RESTARTS = 10;
 const RESTART_RESET_MS = 30000; // Reset counter if alive > 30s
 
-function startServer(updatePromise) {
+function startServer(updatePromise, options = {}) {
+  // attachOnly: a healthy server already owns the port, so this process must
+  // NOT spawn another one. It still shows the menu/tray so the user has a
+  // control surface, but every exit path skips the child-process teardown.
+  const attachOnly = options.attachOnly === true;
   // Accept either a Promise (parallel update check) or a resolved value.
   const latestVersionPromise = Promise.resolve(updatePromise);
   const displayHost = getDisplayHost();
@@ -644,7 +694,12 @@ function startServer(updatePromise) {
   function spawnServer() {
     serverStartTime = Date.now();
     crashLog = [];
-    const child = spawn(RUNTIME, ["--dns-result-order=ipv4first", "--max-old-space-size=6144", serverPath], {
+    // Heap cap: 6144 MB asked for a 6 GB old-space on machines that only have
+    // ~7 GB of RAM, which turns any real heap growth into swap thrash or an
+    // OS OOM kill. 2048 MB is far above this app's working set (~150-400 MB)
+    // and leaves the rest of the box usable. Override with NINEROUTER_HEAP_MB.
+    const heapMb = Number(process.env.NINEROUTER_HEAP_MB) || 2048;
+    const child = spawn(RUNTIME, ["--dns-result-order=ipv4first", `--max-old-space-size=${heapMb}`, serverPath], {
       cwd: standaloneDir,
       stdio: showLog ? "inherit" : ["ignore", "ignore", "pipe"],
       detached: true,
@@ -665,7 +720,8 @@ function startServer(updatePromise) {
     return child;
   }
 
-  let server = spawnServer();
+  // attachOnly never owns a child; every server.* access below is guarded.
+  let server = attachOnly ? null : spawnServer();
 
   // Cleanup function - force kill server process
   let isCleaningUp = false;
@@ -682,12 +738,14 @@ function startServer(updatePromise) {
       killProxyByPidFile();
       // Kill cloudflared/tailscale via PID file (only this app's tunnel)
       killTunnelByPidFile();
-      // Kill server process directly
-      if (server.pid) {
-        process.kill(server.pid, "SIGKILL");
+      // Kill server process directly. `server` is null in attachOnly mode —
+      // that instance belongs to another CLI, so we must not touch it.
+      if (server && server.pid) {
+        try { process.kill(server.pid, "SIGKILL"); } catch { /* already gone */ }
+        // Negative pid targets the detached process group; only valid when we
+        // actually spawned one. Guarded so attachOnly shutdown cannot throw.
+        try { process.kill(-server.pid, "SIGKILL"); } catch { /* no group */ }
       }
-      // Also try to kill process group
-      process.kill(-server.pid, "SIGKILL");
     } catch (e) { }
   }
 
@@ -927,6 +985,9 @@ function startServer(updatePromise) {
   });
 
   function attachServerEvents() {
+    // attachOnly has no child to watch — the healthy instance is owned by a
+    // different process. Attaching listeners to null would throw.
+    if (!server) return;
     server.on("error", (err) => {
       console.error("Failed to start server:", err.message);
       // Serah terima ke tray: server memang sedang dimatikan, dan proses CLI

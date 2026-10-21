@@ -8,6 +8,7 @@ import { buildClineHeaders } from "../shared/clineAuth.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
+import { REASONING_TOKEN_FLOOR, REASONING_TOKEN_PROVIDERS } from "../config/runtimeConfig.js";
 import { extractClaudeSessionIdFromUserId } from "../utils/claudeCloaking.js";
 import { addHeaders as addBuddyHeaders, isBuddyProvider } from "../utils/buddyRequestContext.js";
 
@@ -81,6 +82,19 @@ const REFRESH_GRANTS = Object.fromEntries(
     })
 );
 
+// Raise — never lower — the completion budget for reasoning models that spend
+// the whole budget thinking and then stream an empty answer. Mutates in place so
+// it composes with the other body quirks above.
+function applyReasoningTokenFloor(provider, body) {
+  if (!REASONING_TOKEN_PROVIDERS.has(provider)) return;
+  for (const field of ["max_tokens", "max_completion_tokens"]) {
+    const current = body[field];
+    if (typeof current === "number" && current < REASONING_TOKEN_FLOOR) {
+      body[field] = REASONING_TOKEN_FLOOR;
+    }
+  }
+}
+
 export class DefaultExecutor extends BaseExecutor {
   constructor(provider) {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
@@ -102,6 +116,7 @@ export class DefaultExecutor extends BaseExecutor {
         transformed.reasoning = { ...(transformed.reasoning || {}), effort };
       }
       stripUnsupportedParams(this.provider, model, transformed);
+      applyReasoningTokenFloor(this.provider, transformed);
     }
 
     const injected = injectReasoningContent({ provider: this.provider, model, body: transformed });
