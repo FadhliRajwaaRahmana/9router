@@ -470,6 +470,24 @@ Seluruh fitur dan fix decolua/9router v0.5.95 diadopsi. Kustomisasi fork tetap u
   settings `1 + 1 + 2N` kali (`auth.js` membacanya di dalam loop pemilihan akun,
   `chat.js` di `handleChat` + `handleSingleModelChat`). Tiap panggilan =
   `SELECT data FROM settings WHERE id=1` + `JSON.parse` + merge ~80 default.
+- **Streaming**: fill a missing `id` on streamed tool-call fragments so strict OpenAI-compatible clients stop aborting the turn with "Expected 'id' to be a string" (#4992)
+- **OpenCode**: restore the caller's tool name on the openai→openai passthrough path, so a fingerprint-renamed tool (`read` → `read_client`) no longer reaches the client as a tool it never declared (#4986, #4994)
+- **Nous**: add missing attribution tags to API-key requests through compatible Chat Completions connections, preserving caller tags and identities (#4745)
+- **Cursor**: recover long sessions from empty AgentService turns (#4690); hold strictProxy on the AgentService h2 path (#4696)
+- **OpenCode**: encode inverted timestamp in translated session IDs so non-OpenCode clients pass Zen free-tier checks (#4780); inject `reasoning_content` placeholder for Zen multi-turn chats (#4805); move free tier to `/inference/v1` with the v2 client fingerprint (#4842)
+- **OpenCode Zen**: use attested free-tier identity for `-free` models on keyed lane (#4784)
+- **OpenCode Go**: route `claude-haiku-5-5` to `/messages` with adaptive thinking (#4727); drop `response_format` for the deepseek family (relay rejects with a bare 400)
+- **Capabilities**: add missing OpenCode Free reasoning entries (space-bunny & co) so `reasoning_effort` stops being silently stripped; advertise PDF input for current Claude models (#4761)
+- **Combos**: fallback when a model returns HTTP 200 with zero usable content (#4750)
+- **Qoder**: surface add-on (free-credit promo) quota in the quota tracker (#4758)
+- **Translator**: return Claude messages for forced SSE JSON responses (#4789)
+- **Vertex**: honor API-key project/location for Gemini 4 Argon (#4821)
+- **GitHub**: route Copilot embeddings to `api.githubcopilot.com` (#4793)
+- **Codex**: drop retired gpt-5.5 from registry, image, and auto-ping; CLI preset default to `gpt-6.1-sol`
+- **Gemini**: drop sampling params and order functionResponse-last for Gemini 4 (#4802)
+- **Models**: expose no-auth free providers in `/v1/models`; prune custom models on node deletion
+- **Usage**: token fallback for `input_tokens` rows in 24h/today stats; stable key masking
+- **Dashboard**: unclip proxy dropdown and tooltips via body portal
 
   Sekarang ada cache TTL 5 dtk untuk baris mentah. `mergeWithDefaults()` tetap
   dijalankan tiap panggilan, jadi hasilnya objek baru — tidak ada objek bersama
