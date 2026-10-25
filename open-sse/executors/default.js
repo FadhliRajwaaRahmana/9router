@@ -8,6 +8,7 @@ import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 import { extractClaudeSessionIdFromUserId } from "../utils/claudeCloaking.js";
+import { REASONING_TOKEN_FLOOR, REASONING_FLOOR_HOSTS } from "../config/runtimeConfig.js";
 
 // Auth header descriptors — derived from registry transport.auth, fallback to hardcoded defaults.
 const BEARER = { combined: true, header: "Authorization", scheme: "bearer" };
@@ -71,12 +72,43 @@ const REFRESH_GRANTS = Object.fromEntries(
     })
 );
 
+// Resolve the upstream host for a custom openai-compatible node. These nodes
+// carry their baseUrl on the connection, not in the registry.
+function upstreamHost(provider, credentials) {
+  if (!provider?.startsWith?.("openai-compatible-")) return "";
+  const base = credentials?.providerSpecificData?.baseUrl || OPENAI_COMPAT_BASE;
+  try {
+    return new URL(base).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+// Raise — never lower — the completion budget on upstreams whose reasoning
+// models burn the entire budget thinking and then return an empty message.
+// Without this the turn ends with finish_reason "length" and no tool call,
+// which the client surfaces as "[Tool use interrupted]".
+function applyReasoningTokenFloor(provider, body, credentials) {
+  const host = upstreamHost(provider, credentials);
+  if (!host || !REASONING_FLOOR_HOSTS.has(host)) return;
+
+  // Only act when the client actually constrained the budget. An absent limit
+  // means "upstream default" and must be left alone.
+  const field = ["max_completion_tokens", "max_tokens"].find(
+    (f) => typeof body[f] === "number"
+  );
+  if (!field) return;
+  if (body[field] < REASONING_TOKEN_FLOOR) {
+    body[field] = REASONING_TOKEN_FLOOR;
+  }
+}
+
 export class DefaultExecutor extends BaseExecutor {
   constructor(provider) {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
   }
 
-  transformRequest(model, body) {
+  transformRequest(model, body, stream, credentials) {
     const transformed = this.applyJsonSchemaFallback(body);
 
     if (transformed && typeof transformed === "object") {
@@ -99,6 +131,7 @@ export class DefaultExecutor extends BaseExecutor {
     // Ensure unsupported params (such as reasoning_content on Cerebras) remain stripped after injection
     if (injected && typeof injected === "object") {
       stripUnsupportedParams(this.provider, model, injected);
+      applyReasoningTokenFloor(this.provider, injected, credentials);
     }
 
     return injected;

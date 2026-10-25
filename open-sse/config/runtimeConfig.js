@@ -44,6 +44,14 @@ function envUrl(name, def) {
   return raw || def;
 }
 
+// Positive integer env override (token counts, durations in plain units).
+function envPositiveInt(name, def) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return def;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : def;
+}
+
 // SearXNG endpoint used by the unauthenticated web-search provider.
 // Configure this for a separate Docker service or remote SearXNG instance.
 export const SEARXNG_URL = envUrl("SEARXNG_URL", "http://localhost:8888/search");
@@ -89,6 +97,20 @@ export const DEFAULT_MAX_TOKENS = 64000;
 export const DEFAULT_MIN_TOKENS = 32000;
 
 export const TOKEN_SAVER_HEADER = "x-9router-token-saver";
+
+// ─── Reasoning-model token floor (openai-compatible upstreams) ───────────
+// Reasoning models spend the whole completion budget on hidden thinking and
+// then emit nothing. Measured live against api.river.ai (2026-10-25):
+//   max_tokens 300 → completion 300, reasoning 300, content 0, finish=length
+// The client sees a truncated turn and reports "[Tool use interrupted]" when
+// the budget ran out before the tool call could be emitted.
+//
+// Matched by upstream HOST rather than provider id: these are user-created
+// `openai-compatible-<uuid>` nodes whose ids differ per installation.
+export const REASONING_TOKEN_FLOOR = envPositiveInt("REASONING_TOKEN_FLOOR", 4096);
+export const REASONING_FLOOR_HOSTS = new Set([
+  "api.river.ai",
+]);
 
 // Retry config for 429 responses (legacy - kept for backward compatibility)
 export const RETRY_CONFIG = {

@@ -1,5 +1,60 @@
 # Changelog
 
+# v0.5.146 (2026-10-25) — 9router-imagefix
+
+## Fix: reasoning model kehabisan budget → tool call hilang "Tool use interrupted"
+
+Gejala di klien: turn berhenti dengan `[Tool use interrupted]` pada model
+reasoning lewat provider openai-compatible tertentu (terukur: `api.river.ai`).
+Tidak ada error HTTP — respons tetap 200.
+
+Sebabnya budget completion, bukan transport. Model reasoning menghabiskan
+seluruh `max_tokens` untuk hidden thinking lalu mengembalikan pesan kosong.
+Terukur live terhadap `api.river.ai` dengan `max_tokens: 300`:
+
+```
+completion_tokens: 300
+reasoning_tokens:  300      <- 100% terpakai untuk thinking
+content_len:         0      <- tidak ada output
+finish_reason:   "length"   <- terpotong sebelum tool call terbentuk
+```
+
+Klien menerima `finish_reason: "length"` tanpa `tool_calls`, dan menerjemahkan
+turn yang terpotong itu menjadi "Tool use interrupted".
+
+`applyReasoningTokenFloor()` menaikkan — tidak pernah menurunkan — budget
+completion ke `REASONING_TOKEN_FLOOR` (default 4096, dapat ditimpa lewat env)
+untuk upstream yang terdaftar di `REASONING_FLOOR_HOSTS`.
+
+Pencocokan memakai **host upstream**, bukan id provider: provider ini adalah
+node buatan pengguna bertipe `openai-compatible-<uuid>` yang id-nya berbeda di
+tiap instalasi, sedangkan `providerSpecificData.baseUrl` stabil.
+
+Perilaku yang dijaga:
+
+- Budget yang sudah besar tidak diturunkan (`max_tokens: 8000` tetap 8000).
+- Request tanpa limit tidak ditambahi field (`{}` tetap `{}`) — absen berarti
+  "pakai default upstream".
+- Provider lain tidak tersentuh; hanya host di daftar yang terpengaruh.
+
+Terverifikasi live (streaming, dengan tool `read`), `max_tokens: 300`:
+
+| Model | Sebelum | Sesudah |
+|---|---|---|
+| Kimi-K3 | `length`, 0 tool call | `tool_calls`, 2 |
+| GLM-5.3-Flash | `length`, 0 tool call | `tool_calls`, 2 |
+| DeepSeek-V4.1-Flash | `length`, 0 tool call | `tool_calls`, 2 |
+| Qwen3.8-27B-FP8 | `length`, 0 tool call | `tool_calls`, 5 |
+
+## Perbaikan lain
+
+- `DefaultExecutor.transformRequest` kini menerima `credentials`. Signature-nya
+  sebelumnya `(model, body)` sehingga `providerSpecificData.baseUrl` tidak
+  terbaca, padahal pemanggil di `base.js` sudah mengirim empat argumen. Ini
+  bug laten, bukan sekadar kebutuhan patch di atas.
+- Helper `envPositiveInt()` ditambahkan di `config/runtimeConfig.js` untuk
+  override env bertipe integer positif.
+
 # v0.5.141 (2026-10-05) — 9router-imagefix
 
 ## Model baru: Claude Sonnet 5.5 & Opus 5.5 di Antigravity
