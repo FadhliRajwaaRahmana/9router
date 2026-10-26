@@ -1,5 +1,52 @@
 # Changelog
 
+# v0.5.147 (2026-10-26) — 9router-imagefix
+
+Port dua perbaikan upstream yang menyasar gejala `[Tool use interrupted]`.
+Dipilih per-commit (cherry-pick), bukan merge branch: fork ini 137 commit di
+depan upstream, merge akan menghasilkan konflik yang tidak terkendali.
+
+## Fix: fragment tool-call tanpa id memutus turn di klien strict
+
+`95c9d03e` (upstream #4992, #4986).
+
+Fragment `tool_calls` yang membuka index baru tanpa field `id` diteruskan apa
+adanya ke klien. SDK OpenAI-compatible yang strict menghentikan turn dengan
+"Expected 'id' to be a string" — di Claude Code muncul sebagai
+`[Tool use interrupted]`.
+
+`ensureStreamToolCallIds()` sekarang menambal id sebelum chunk mencapai klien:
+memakai id yang sudah terlihat untuk index yang sama, atau mencetak id baru
+untuk fragment yang membuka index tanpa id. Sekalian memulihkan nama tool
+asli pada jalur passthrough openai→openai bila sempat diganti alias oleh
+fingerprint (`read` → `read_client`).
+
+Terverifikasi lewat suite: 7 test baru untuk perilaku ini sebelumnya gagal di
+fork, sekarang lulus.
+
+## Fix: combo berhenti pada respons streaming kosong
+
+`ca7b5401` (upstream). Model dapat membalas HTTP 200 namun mengalirkan nol
+frame konten — Gemini `MALFORMED_FUNCTION_CALL` adalah contohnya. Sebelumnya
+respons kosong itu dikirim ke klien sebagai jawaban sukses, tanpa failover.
+
+Sekarang stream 2xx diintip lebih dulu (`peekStreamForContent`): bila tidak
+ada frame berisi konten sampai `EMPTY_PEEK_DEADLINE_MS` (default 45 detik),
+combo lanjut ke kandidat berikutnya alih-alih menyerahkan jawaban kosong.
+Stream diputar ulang secara setia (`reconstructStream`) bila ternyata berisi,
+jadi tidak ada byte yang hilang untuk respons normal.
+
+## Catatan port
+
+- Commit upstream `6e4f82db` (uniquify duplicate tool_call_ids) **tidak**
+  diambil: perubahannya khusus translator Gemini dan menimbulkan konflik di
+  `openai-to-gemini.js`. Tidak relevan untuk jalur openai-compatible.
+- Commit upstream `93001213` (abort in-band) sudah ada di fork — cherry-pick
+  kosong, dilewati.
+- Suite unit: **sebelum port 64 gagal, sesudah 58 gagal**. Tidak ada regresi;
+  3 kegagalan `db-concurrent` terbukti gagal juga pada commit pra-port
+  (flaky di mesin ini, bukan akibat perubahan).
+
 # v0.5.146 (2026-10-25) — 9router-imagefix
 
 ## Fix: reasoning model kehabisan budget → tool call hilang "Tool use interrupted"
