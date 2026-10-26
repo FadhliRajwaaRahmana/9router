@@ -1,5 +1,67 @@
 # Changelog
 
+# v0.5.148 (2026-10-27) — 9router-imagefix
+
+## Fix: CodeBuddy menolak semua permintaan dengan 400 / code 11128
+
+Gateway CodeBuddy menjalankan *channel check* pada setiap panggilan. Permintaan
+yang tidak bisa dikaitkan ke klien resmi ditolak:
+
+```
+HTTP 400 {"code":11128,"msg":"request illegal"}
+displayTips: "This call failed channel verification, possibly because it was
+not sent from an official client."
+```
+
+9router hanya mengirim header auth, jadi seluruh model `codebuddy-intl` dan
+`codebuddy-cn` gagal. Pembanding A/B pada build yang sama, model `cbai/glm-5.2`:
+
+| instance | hasil |
+|---|---|
+| sebelum patch | `HTTP 400` code 11128 |
+| sesudah patch | `HTTP 200` — `"PONG"` |
+
+`open-sse/utils/buddyRequestContext.js` menambahkan delapan header identitas
+yang dikirim klien resmi, dengan pembagian peran yang tepat:
+
+- `X-Conversation-ID` — **stabil sepanjang percakapan** (afinitas routing +
+  prefix cache; berubah tiap turn justru mematikan keduanya).
+- `X-Conversation-Request-ID`, `X-Root-Request-ID` — satu per turn, tetap
+  sama across retry/fallback akun.
+- `X-Conversation-Message-ID`, `X-B3-SpanId` — dicetak ulang tiap request
+  keluar, termasuk retry.
+- `X-Trace-ID`, `X-B3-TraceId`, `X-B3-Sampled` — meneruskan nilai masuk bila
+  bentuknya sah, jika tidak dibuat baru.
+
+Konteks turn disimpan di `AsyncLocalStorage`, bukan sebagai field pada executor:
+executor adalah singleton, sehingga state instance akan menukar id antar request
+paralel.
+
+## Fix: combo tidak maju saat CodeBuddy kena 11128
+
+`ERROR_RULES` tidak punya aturan untuk 11128, sehingga jatuh ke cabang "4xx =
+salah request klien, jangan fallback". Combo berhenti di model itu alih-alih
+mencoba kandidat berikutnya. Tiga aturan teks khusus provider ditambahkan
+(`request illegal`, `channel verification`, `not sent from an official client`,
+plus varian CN) dengan cooldown pendek 15 detik dan **bukan** backoff
+eksponensial — kegagalan ini verdict per panggilan, bukan kuota habis.
+
+`checkFallbackError()` di `combo.js` kini menerima provider id, dan alias pendek
+(`cbai`/`cbcn`) di-resolve lebih dulu lewat `resolveProviderAlias()`.
+
+Dampak yang diverifikasi: 400 biasa dari provider lain tetap **tidak** memicu
+fallback (perilaku lama dipertahankan), `river` 400 → `shouldFallback:false`,
+CodeBuddy 401 → tetap 120 s seperti sebelumnya.
+
+## Verifikasi
+
+- `tests/unit/buddy-request-context.test.js` (diport dari cabang percobaan): 8/8 lulus.
+- Live: `cbai/glm-5.2`, `cbai/deepseek-v4.1-flash` → HTTP 200.
+- Live streaming + tool call → `finish: tool_calls`, 5 fragment args, tanpa error.
+- Regresi unit: baseline 64 gagal → 58 gagal (7 test `ensureStreamToolCallIds`
+  ikut lulus). Satu-satunya nama "baru", `DB Concurrency`, terbukti gagal
+  **tanpa** patch juga (3/8 gagal saat dijalankan sendiri) — flaky bawaan.
+
 # v0.5.147 (2026-10-26) — 9router-imagefix
 
 Port dua perbaikan upstream yang menyasar gejala `[Tool use interrupted]`.

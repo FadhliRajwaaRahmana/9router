@@ -62,6 +62,11 @@ const COOLDOWN = {
   short: 5 * 1000,
 };
 
+// CodeBuddy channel-check lock. Short on purpose: the failure is a per-call
+// gateway verdict that clears as soon as the identity headers repair it, and
+// the connection may still serve its other models. See ERROR_RULES below.
+const CODEBUDDY_LOCK_MS = 15 * 1000;
+
 /**
  * Unified error classification rules.
  * Checked top-to-bottom: text rules first (by order), then status rules.
@@ -82,6 +87,20 @@ export const ERROR_RULES = [
   { text: "quota exceeded",           backoff: true },
   { text: "capacity",                 backoff: true },
   { text: "overloaded",               backoff: true },
+
+  // CodeBuddy channel check (HTTP 400, code 11128 "request illegal"). The
+  // gateway refuses calls it can't attribute to an official client, so this
+  // reads like a client-side 400 — but it is scoped to ONE connection, not to
+  // the request body. Without a rule it fell through to the generic
+  // "4xx = client's fault, do not fall back" branch below, so a combo stopped
+  // dead on that model instead of advancing (upstream #5024). Backoff is
+  // deliberately short and NOT exponential: a stale credential or a rotated
+  // channel check must not park a whole provider for minutes.
+  { provider: "codebuddy-intl", text: "request illegal", cooldownMs: CODEBUDDY_LOCK_MS },
+  { provider: "codebuddy-intl", text: "channel verification", cooldownMs: CODEBUDDY_LOCK_MS },
+  { provider: "codebuddy-intl", text: "not sent from an official client", cooldownMs: CODEBUDDY_LOCK_MS },
+  { provider: "codebuddy-cn", text: "请求非法", cooldownMs: CODEBUDDY_LOCK_MS },
+  { provider: "codebuddy-cn", text: "request illegal", cooldownMs: CODEBUDDY_LOCK_MS },
 
   // --- Status-based rules (fallback when text doesn't match) ---
   { status: 401, cooldownMs: COOLDOWN.long },

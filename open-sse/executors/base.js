@@ -4,6 +4,7 @@ import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
+import { createTurn, run as runWithTurn, isBuddyProvider } from "../utils/buddyRequestContext.js";
 
 /**
  * BaseExecutor - Base class for provider executors
@@ -97,7 +98,25 @@ export class BaseExecutor {
     return { status: response.status, message: bodyText || `HTTP ${response.status}` };
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, providerOverrides = null }) {
+  async execute(opts) {
+    // CodeBuddy / WorkBuddy run a channel check that needs conversation-scoped
+    // identity headers. Bind one turn per execute() call: the context lives in
+    // AsyncLocalStorage, so parallel accounts never trade ids, and the turn
+    // survives every retry/fallback inside this call while message + span ids
+    // are regenerated per outbound request.
+    if (isBuddyProvider(this.provider)) {
+      const credentials = opts?.credentials || {};
+      const turn = createTurn(credentials.rawHeaders || {}, {
+        body: opts?.body ?? null,
+        connectionId: credentials.connectionId ?? null,
+        scope: this.provider,
+      });
+      return runWithTurn(turn, () => this._executeInner(opts));
+    }
+    return this._executeInner(opts);
+  }
+
+  async _executeInner({ model, body, stream, credentials, signal, log, proxyOptions = null, providerOverrides = null }) {
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
     let lastStatus = 0;
