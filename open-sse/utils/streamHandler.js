@@ -99,15 +99,28 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
  * @param {function} [onAbortTerminal] - Receives a human-readable abort
  * message and returns terminal SSE bytes to emit downstream.
  */
-export function createDisconnectAwareStream(transformStream, streamController, onAbortTerminal = null) {
+export function createDisconnectAwareStream(transformStream, streamController, onAbortTerminal = null, onBeforeTerminal = null) {
   const reader = transformStream.readable.getReader();
   const writer = transformStream.writable.getWriter();
   let terminalEmitted = false;
 
   // Emit a synthesized terminal payload (e.g. Responses response.failed + [DONE]) once
   const emitTerminal = (controller) => {
-    if (terminalEmitted || !onAbortTerminal) return;
+    if (terminalEmitted) return;
     terminalEmitted = true;
+
+    // Balance whatever the client already saw BEFORE the error frame. A Claude
+    // stream that already opened `content_block_start` must receive the matching
+    // `content_block_stop` + `message_stop`, otherwise the block stays open and
+    // the client shows "[Tool use interrupted]" instead of the real error.
+    if (onBeforeTerminal) {
+      try {
+        const closing = onBeforeTerminal();
+        if (closing) controller.enqueue(closing);
+      } catch { /* best-effort closing */ }
+    }
+
+    if (!onAbortTerminal) return;
     try {
       const bytes = onAbortTerminal();
       if (bytes) controller.enqueue(bytes);
@@ -192,7 +205,7 @@ export function createDisconnectAwareStream(transformStream, streamController, o
  * @param {TransformStream} transformStream - Transform stream for SSE
  * @param {object} streamController - Stream controller from createStreamController
  */
-export function pipeWithDisconnect(providerResponse, transformStream, streamController, onAbortTerminal = null, stallTimeoutMs = STREAM_STALL_TIMEOUT_MS) {
+export function pipeWithDisconnect(providerResponse, transformStream, streamController, onAbortTerminal = null, stallTimeoutMs = STREAM_STALL_TIMEOUT_MS, onBeforeTerminal = null) {
   let stallTimer = null;
   let chunkCount = 0;
   let totalBytes = 0;
@@ -254,7 +267,8 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
   return createDisconnectAwareStream(
     { readable: transformedBody, writable: { getWriter: () => ({ abort: () => Promise.resolve() }) } },
     wrappedController,
-    onAbortTerminal ? () => onAbortTerminal(abortMessage) : null
+    onAbortTerminal ? () => onAbortTerminal(abortMessage) : null,
+    onBeforeTerminal
   );
 }
 

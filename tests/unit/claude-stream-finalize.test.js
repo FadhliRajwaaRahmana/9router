@@ -123,3 +123,57 @@ describe("closeOpenClaudeBlocks idempoten", () => {
                                 e.delta?.type === "input_json_delta")).toHaveLength(0);
   });
 });
+
+describe("penutupan pada jalur koneksi putus (onBeforeTerminal)", () => {
+  it("menyeimbangkan blok sebelum frame error", async () => {
+    const { createDisconnectAwareStream } = await import("open-sse/utils/streamHandler.js");
+
+    const tr = createSSETransformStreamWithLogger(
+      FORMATS.OPENAI, FORMATS.CLAUDE, "p", null, null, "m", "c", {}, null
+    );
+
+    let connected = true;
+    const ctl = {
+      signal: new AbortController().signal,
+      startTime: Date.now(),
+      isConnected: () => connected,
+      handleComplete: () => {},
+      handleError: () => {},
+      handleDisconnect: () => { connected = false; },
+      abort: () => { connected = false; },
+    };
+
+    // Simulasikan penutup yang dikirim ketika koneksi putus
+    const closingBytes = () => {
+      const st = {
+        toolCalls: new Map([[0, { id: "call_1", name: "Read", blockIndex: 0 }]]),
+        toolArgBuffers: new Map([[0, '{"file_path":']]),
+        nextBlockIndex: 1,
+      };
+      const events = closeOpenClaudeBlocks(st);
+      return new TextEncoder().encode(
+        events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("")
+      );
+    };
+
+    const outer = createDisconnectAwareStream(
+      tr, ctl,
+      () => new TextEncoder().encode('event: error\ndata: {"type":"error"}\n\n'),
+      closingBytes
+    );
+
+    connected = false;
+    const r = outer.getReader();
+    let all = "";
+    const dec = new TextDecoder();
+    for (;;) {
+      const { done, value } = await r.read();
+      if (done) break;
+      all += dec.decode(value);
+    }
+
+    expect(all).toContain("content_block_stop");
+    expect(all).toContain("message_stop");
+    expect(all).toContain("error");
+  }, 20000);
+});

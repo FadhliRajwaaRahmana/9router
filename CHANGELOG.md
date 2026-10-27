@@ -30,11 +30,30 @@ Berlaku hanya untuk klien Claude (`sourceFormat === FORMATS.CLAUDE`); klien
 OpenAI tidak tersentuh. Idempoten: panggilan kedua tidak menutup indeks yang
 sama dua kali.
 
+## Fix: koneksi putus di tengah stream juga meninggalkan blok terbuka
+
+Jalur `handleDisconnect`/`cancel` melewati `flush()` sepenuhnya, jadi penutupan
+di atas tidak menolongnya. Direproduksi dengan upstream HTTP sungguhan yang
+memutus socket setelah membuka sebuah `tool_use`:
+
+| | sebelum | sesudah |
+|---|---|---|
+| `content_block_start` | 2 | 2 |
+| `content_block_stop` | **1** | **2** |
+| `message_stop` | **0** | **1** |
+| `stop_reason` | `None` | `tool_use` |
+
+`createDisconnectAwareStream()` kini menerima `onBeforeTerminal`: penutup blok
+dikirim **sebelum** frame error, sehingga klien melihat
+`{\"message\":\"upstream connection lost\"}` yang jelas alih-alih
+`[Tool use interrupted]`. State translator diambil lewat hook `onStateReady`
+baru di `createSSEStream()`.
+
 ## Batas kejujuran — apa yang BELUM terbukti
 
-Bug di atas **nyata dan diperbaiki**, tetapi **belum terbukti sebagai penyebab
-`[Tool use interrupted]` yang dilaporkan pada provider river**. Yang terukur
-pada river (DeepSeek-V4.1-Flash-1017):
+Kedua bug di atas **nyata dan diperbaiki**, tetapi **belum terbukti sebagai
+penyebab `[Tool use interrupted]` yang dilaporkan pada provider river**. Yang
+terukur pada river (DeepSeek-V4.1-Flash-1017):
 
 - River **selalu** mengirim `finish_reason` + `[DONE]`, bahkan saat dipaksa
   `max_tokens: 16` — jadi jalur EOF-tanpa-finish tidak tersentuh.
@@ -43,14 +62,15 @@ pada river (DeepSeek-V4.1-Flash-1017):
 - 12 skenario uji lewat `/v1/messages` (tools, streaming, prompt berat, 3m41s
   thinking) semuanya berakhir sehat: `stop_reason: tool_use`, blok seimbang.
 
-Penyebab yang tersisa dan belum diuji: koneksi putus di tengah stream
-(`handleDisconnect`/`cancel` di `streamHandler.js` — di sana blok juga tidak
-ditutup karena `flush()` tidak dijalankan). Itu kandidat perbaikan berikutnya.
+Kedua jalur yang kini diperbaiki adalah jalur yang **mungkin** memotong turn
+seperti pada tangkapan layar, dan keduanya terbukti menghasilkan gejala yang
+sama persis bila dipicu. Penyebab mana yang menimpa river belum dapat
+dipastikan tanpa merekam kejadian berikutnya.
 
 ## Verifikasi
 
-- `tests/unit/claude-stream-finalize.test.js`: 7/7 lulus (3 stream end-to-end,
-  4 unit helper termasuk idempotensi)
+- `tests/unit/claude-stream-finalize.test.js`: 8/8 lulus (3 stream end-to-end,
+  4 unit helper termasuk idempotensi, 1 jalur disconnect)
 - Live river lewat `/v1/messages`: `start:1 stop:1 msg_stop:1 stop_reason:tool_use`
 - Regresi unit: 64 gagal → 58 gagal, tanpa nama gagal baru
 

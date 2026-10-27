@@ -66,7 +66,8 @@ export function createSSEStream(options = {}) {
     body = null,
     onStreamComplete = null,
     apiKey = null,
-    credentials = null
+    credentials = null,
+    onStateReady = null
   } = options;
 
   let buffer = "";
@@ -90,6 +91,12 @@ export function createSSEStream(options = {}) {
         // it is in. Absent/undefined means "unknown", i.e. do not defer.
         targetFormat }
     : null;
+
+  // Hand the live translator state to the caller so the disconnect path can
+  // balance content blocks it already emitted (see createDisconnectAwareStream).
+  if (state && typeof onStateReady === "function") {
+    try { onStateReady(state); } catch { /* observer must not break the stream */ }
+  }
 
   let totalContentLength = 0;
   let accumulatedContent = "";
@@ -703,7 +710,7 @@ export function closeOpenClaudeBlocks(state) {
   return events;
 }
 
-export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null, credentials = null) {
+export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null, credentials = null, onStateReady = null) {
   return createSSEStream({
     mode: STREAM_MODE.TRANSLATE,
     targetFormat,
@@ -717,7 +724,8 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
     body,
     onStreamComplete,
     apiKey,
-    credentials
+    credentials,
+    onStateReady
   });
 }
 
