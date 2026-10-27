@@ -70,6 +70,15 @@ const PATTERN_THINKING = [
   { provider: "codebuddy-cn", pattern: "hy4*",         levels: ["high"] },
   // codebuddy-intl rides the same gateway catalog, so its deepseek levels match.
   { provider: "codebuddy-intl", pattern: "deepseek-v4*", levels: ["low", "high", "xhigh"] },
+  // Meta Model API (muse) documents reasoning_effort up to "max" — "extended
+  // reasoning beyond xhigh" for standard-tier muse-spark-1.3 / muse-wonder-1.0.
+  // The docs say contributor tiers do not support it, but the gateway does NOT
+  // reject it (probed live 2026-10-27: max on 1.3-contributor returns HTTP 200
+  // with a normal answer), so offer it on every Meta model. Worst case the
+  // upstream silently clamps it to the highest tier it honors, same as the
+  // codebuddy-cn policy above. The openai format default stops at xhigh, hence
+  // the explicit pattern.
+  { provider: "muse", pattern: "*", levels: ["none", "minimal", "low", "medium", "high", "xhigh", "max"] },
 ];
 
 // Returns valid thinking levels for a model, or null when the model has no reasoning.

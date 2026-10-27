@@ -1,5 +1,43 @@
 # Changelog
 
+# v0.5.151 (2026-10-27) — 9router-imagefix
+
+## Fitur: level thinking `max` untuk semua model Muse
+
+Dropdown thinking Muse sebelumnya berhenti di Xhigh karena model-model ini
+tidak punya pola khusus di `thinkingLevels.js`, sehingga jatuh ke set default
+format `openai` yang memang tidak mengenal `max`.
+
+Padahal dokumentasi resmi Meta ([Reasoning](https://dev.meta.ai/docs/reasoning))
+mencantumkan `max` sebagai *"extended reasoning beyond xhigh"* untuk
+`muse-spark-1.3` standard. Diuji langsung: `reasoning_effort: "max"` ke semua
+empat model (1.3, 1.2, 1.3-contributor, 1.2-contributor) mengembalikan
+HTTP 200 — termasuk contributor, yang menurut docs "not available", tapi
+gateway tidak menolaknya (kemungkinan di-clamp diam-diam ke level tertinggi
+yang didukung tier itu).
+
+Pola baru di `thinkingLevels.js`:
+
+```js
+{ provider: "muse", pattern: "*", levels: ["none", "minimal", "low", "medium", "high", "xhigh", "max"] }
+```
+
+`none` tetap disaring keluar oleh `thinkingCanDisable: false` — Muse Spark
+selalu reasoning, Meta menjawab 400 untuk `none`. Perilaku tidak berubah.
+
+Catatan pengukuran: pada soal yang sama, `max` vs `xhigh` tidak menunjukkan
+perbedaan yang signifikan (rentang token tumpang tindih). `max` ditambahkan
+karena valid menurut docs dan tidak ditolak gateway — bukan karena terbukti
+lebih dalam. Uji ulang dengan soal yang jauh lebih sulit bila ingin memastikan.
+
+## Verifikasi
+
+- `tests/unit/muse-thinking-levels.test.js`: 4/4 lulus (semua model punya max,
+  none tetap dilarang, urutan benar, provider lain tidak tersentuh)
+- Live: `reasoning_effort: "max"` HTTP 200 di 1.3, 1.2, 1.3-contributor,
+  1.2-contributor
+- Regresi unit: 64 gagal → 58 gagal, tanpa nama gagal baru
+
 # v0.5.150 (2026-10-27) — 9router-imagefix
 
 ## Fix: nama tool MCP panjang membuat seluruh request ditolak
