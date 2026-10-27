@@ -1,5 +1,59 @@
 # Changelog
 
+# v0.5.149 (2026-10-27) — 9router-imagefix
+
+## Fix: klien Claude menggantung saat upstream berakhir tanpa finish_reason
+
+Ketika upstream menutup stream **tanpa pernah mengirim `finish_reason`**,
+translator tidak menutup blok konten yang sudah dibukanya. `flush()` hanya
+memanggil `translateResponse(..., null, state)`, dan seluruh penanganan
+penutupan di `openai-to-claude.js` berada di dalam cabang
+`if (choice.finish_reason)`.
+
+Akibatnya klien Claude menerima `content_block_start` untuk sebuah `tool_use`
+tanpa `content_block_stop` dan tanpa `message_stop`. Claude Code menampilkan
+`[Tool use interrupted]`.
+
+Diukur langsung pada translator (bukan diduga):
+
+| skenario | `flush()` | blok terbuka | ditutup |
+|---|---|---|---|
+| EOF tanpa `finish_reason` | `null` | 1 | 0 |
+| `finish_reason` ada | 4 event | 1 | 1 |
+
+`closeOpenClaudeBlocks()` menutup apa pun yang masih terbuka dan menutup turn:
+argumen yang ter-buffer dikirim sebagai `input_json_delta` (JSON parsial jauh
+lebih berguna daripada `input: {}`), lalu `content_block_stop`,
+`message_delta` dengan `stop_reason`, dan `message_stop`.
+
+Berlaku hanya untuk klien Claude (`sourceFormat === FORMATS.CLAUDE`); klien
+OpenAI tidak tersentuh. Idempoten: panggilan kedua tidak menutup indeks yang
+sama dua kali.
+
+## Batas kejujuran — apa yang BELUM terbukti
+
+Bug di atas **nyata dan diperbaiki**, tetapi **belum terbukti sebagai penyebab
+`[Tool use interrupted]` yang dilaporkan pada provider river**. Yang terukur
+pada river (DeepSeek-V4.1-Flash-1017):
+
+- River **selalu** mengirim `finish_reason` + `[DONE]`, bahkan saat dipaksa
+  `max_tokens: 16` — jadi jalur EOF-tanpa-finish tidak tersentuh.
+- River **mengabaikan** `max_tokens`: diminta 400, terpakai 7338 token output.
+  Jadi kehabisan budget bukan penyebabnya.
+- 12 skenario uji lewat `/v1/messages` (tools, streaming, prompt berat, 3m41s
+  thinking) semuanya berakhir sehat: `stop_reason: tool_use`, blok seimbang.
+
+Penyebab yang tersisa dan belum diuji: koneksi putus di tengah stream
+(`handleDisconnect`/`cancel` di `streamHandler.js` — di sana blok juga tidak
+ditutup karena `flush()` tidak dijalankan). Itu kandidat perbaikan berikutnya.
+
+## Verifikasi
+
+- `tests/unit/claude-stream-finalize.test.js`: 7/7 lulus (3 stream end-to-end,
+  4 unit helper termasuk idempotensi)
+- Live river lewat `/v1/messages`: `start:1 stop:1 msg_stop:1 stop_reason:tool_use`
+- Regresi unit: 64 gagal → 58 gagal, tanpa nama gagal baru
+
 # v0.5.148 (2026-10-27) — 9router-imagefix
 
 ## Fix: CodeBuddy menolak semua permintaan dengan 400 / code 11128

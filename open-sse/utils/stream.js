@@ -10,6 +10,7 @@ import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE, ensureStream
 import { restoreToolNames } from "./opencodeFingerprint.js";
 import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
+import { CLAUDE_STOP } from "../translator/schema/finishReasons.js";
 
 import { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER } from "./sseConstants.js";
 
@@ -547,6 +548,40 @@ export function createSSEStream(options = {}) {
 
         const flushed = translateResponse(targetFormat, sourceFormat, null, state);
 
+        // An upstream that closes WITHOUT ever sending `finish_reason` (it ran out
+        // of budget, got cut by a proxy, or just dropped the connection) leaves
+        // the Claude client holding an open content block: the translator emits
+        // `content_block_start` for a tool_use but never the matching
+        // `content_block_stop`, because its finish handling lives behind
+        // `choice.finish_reason`. Claude Code surfaces that as
+        // "[Tool use interrupted]" — measured against river.ai on 2026-10-27,
+        // where flush() returned null with one block still open.
+        //
+        // Close whatever is still open so the turn terminates cleanly. The
+        // buffered arguments are flushed with it: partial JSON is far more
+        // useful to the client than an empty `input: {}`, and the tool result
+        // then comes back as a normal, retryable validation error.
+        //
+        // `sourceFormat` is the CLIENT format (chatCore: detectFormat(body)) and
+        // `targetFormat` is the UPSTREAM format (getTargetFormat(provider)), so a
+        // Claude client is the `source` here — verified against translateResponse.
+        const needsClaudeFinalize =
+          sourceFormat === FORMATS.CLAUDE &&
+          state && !state.finishReason &&
+          (state.nextBlockIndex > 0 || state.toolCalls?.size > 0);
+
+        if (needsClaudeFinalize) {
+          const tail = closeOpenClaudeBlocks(state);
+          for (const item of tail) {
+            const output = formatSSE(item, sourceFormat);
+            reqLogger?.appendConvertedChunk?.(output);
+            controller.enqueue(sharedEncoder.encode(output));
+            sseEmittedCount++;
+          }
+          state.finishReason = "length";
+          dbg("SSE", `finalize: upstream EOF tanpa finish_reason | blocks=${state.nextBlockIndex} | tools=${state.toolCalls?.size ?? 0}`);
+        }
+
         if (flushed?._openaiIntermediate) {
           for (const item of flushed._openaiIntermediate) {
             const openaiOutput = formatSSE(item, FORMATS.OPENAI);
@@ -587,6 +622,85 @@ export function createSSEStream(options = {}) {
       }
     }
   });
+}
+
+/**
+ * Close whatever Claude content blocks are still open and terminate the turn.
+ *
+ * Used only when the upstream ended WITHOUT a `finish_reason`, in which case the
+ * translator's own finish path never runs. Emits, in wire order: any buffered
+ * tool arguments, `content_block_stop` for each open tool block, a
+ * `message_delta` carrying a stop_reason, and `message_stop`. A Claude client
+ * that receives `message_stop` stops waiting for the missing block instead of
+ * showing "[Tool use interrupted]".
+ *
+ * Tool blocks are closed from the tool map (the authoritative list of opened
+ * blocks); any other block index the translator opened is not tracked there, so
+ * only those are closed.
+ *
+ * @param {object} state - Translator state for this stream
+ * @returns {Array<object>} Claude SSE events to emit
+ */
+export function closeOpenClaudeBlocks(state) {
+  const events = [];
+  if (!state) return events;
+
+  const toolBlocks = state.toolCalls instanceof Map ? [...state.toolCalls.values()] : [];
+  const openIndexes = new Set(toolBlocks.map((t) => t.blockIndex));
+  // Assign back to state: the translator may call this after already setting
+  // these, or before it ever has. A local-only Set would silently drop the
+  // "already closed" marks and let a second call close the same index twice.
+  if (!(state.emittedToolArgs instanceof Set)) state.emittedToolArgs = new Set();
+  if (!(state.stoppedToolBlocks instanceof Set)) state.stoppedToolBlocks = new Set();
+  const emitted = state.emittedToolArgs;
+  const stopped = state.stoppedToolBlocks;
+
+  // Flush arguments the finish path never reached. Partial JSON is intentional:
+  // an empty `input: {}` loses the model's intent entirely, while a truncated
+  // object reaches the tool and comes back as a normal validation error.
+  for (const [idx, toolInfo] of state.toolCalls instanceof Map ? state.toolCalls.entries() : []) {
+    const buffered = state.toolArgBuffers?.get?.(idx);
+    if (buffered && !emitted.has(idx)) {
+      events.push({
+        type: "content_block_delta",
+        index: toolInfo.blockIndex,
+        delta: { type: "input_json_delta", partial_json: buffered }
+      });
+      emitted.add(idx);
+    }
+  }
+
+  for (const toolInfo of toolBlocks) {
+    if (stopped.has(toolInfo.blockIndex)) continue;
+    stopped.add(toolInfo.blockIndex);
+    events.push({ type: "content_block_stop", index: toolInfo.blockIndex });
+  }
+
+  // A text or thinking block may also be open; close it so every block index the
+  // client saw is balanced. The translator tracks these with flags, not an index
+  // list, so derive them from the state it already keeps.
+  if (state.textBlockStarted && !state.textBlockClosed) {
+    state.textBlockClosed = true;
+    state.textBlockStarted = false;
+    if (!openIndexes.has(state.textBlockIndex)) {
+      events.push({ type: "content_block_stop", index: state.textBlockIndex });
+    }
+  }
+  if (state.thinkingBlockStarted) {
+    state.thinkingBlockStarted = false;
+    if (!openIndexes.has(state.thinkingBlockIndex)) {
+      events.push({ type: "content_block_stop", index: state.thinkingBlockIndex });
+    }
+  }
+
+  events.push({
+    type: "message_delta",
+    delta: { stop_reason: toolBlocks.length > 0 ? CLAUDE_STOP.TOOL_USE : CLAUDE_STOP.MAX_TOKENS },
+    usage: state.usage || { input_tokens: 0, output_tokens: 0 }
+  });
+  events.push({ type: "message_stop" });
+
+  return events;
 }
 
 export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null, credentials = null) {
