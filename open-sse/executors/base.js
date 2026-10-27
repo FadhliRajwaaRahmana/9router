@@ -146,6 +146,15 @@ export class BaseExecutor {
     for (let urlIndex = 0; urlIndex < fallbackCount; urlIndex++) {
       const url = this.buildUrl(model, stream, urlIndex, credentials);
       const transformedBody = this.transformRequest(model, body, stream, credentials);
+      // Internal bookkeeping set by executors that rename tools (e.g. the
+      // per-provider tool-name ceiling). It must NOT reach the upstream — Meta
+      // answers 400 `unknown parameter _toolNameMap` — but chatCore still needs
+      // it, so lift it off the body and return it alongside the response.
+      let toolNameMap = null;
+      if (transformedBody && typeof transformedBody === "object" && "_toolNameMap" in transformedBody) {
+        toolNameMap = transformedBody._toolNameMap;
+        delete transformedBody._toolNameMap;
+      }
       const headers = this.buildHeaders(credentials, stream, url, model, transformedBody);
       // User per-provider override wins over registry headers (blocked names filtered at the API)
       if (providerOverrides?.headers) Object.assign(headers, providerOverrides.headers);
@@ -184,7 +193,7 @@ export class BaseExecutor {
           continue;
         }
 
-        return { response, url, headers, transformedBody };
+        return { response, url, headers, transformedBody, toolNameMap };
       } catch (error) {
         clearTimeout(connectTimer);
         lastError = error;

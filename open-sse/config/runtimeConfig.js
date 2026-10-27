@@ -117,6 +117,22 @@ export const REASONING_FLOOR_HOSTS = new Set([
   "api.river.ai",
 ]);
 
+// ─── Tool-name length ceiling per provider ───────────────────────────────
+// Some upstreams reject a request outright when a tool name is too long:
+//   Meta (muse) → HTTP 400 `name must be at most 64 characters, got 74`
+// Measured 2026-10-27 with the MCP aiven tool
+// `mcp__aiven__aiven_vcs_integration_repository_container_manifest_files_list`
+// (74 chars). CodeBuddy accepts the same name, so the limit is per-upstream.
+//
+// Clients build MCP tool names as `mcp__<server>__<tool>`, so a single long
+// server tool name makes the WHOLE request fail — every model on that provider
+// becomes unusable, not just the one tool. Names are shortened on the way out
+// and restored on the way back (toolNameMap), so the client still sees its own
+// spelling.
+export const TOOL_NAME_MAX_BY_PROVIDER = {
+  muse: 64,
+};
+
 // Retry config for 429 responses (legacy - kept for backward compatibility)
 export const RETRY_CONFIG = {
   maxAttempts: 2,

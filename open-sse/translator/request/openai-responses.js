@@ -16,6 +16,11 @@ import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM } from "../schema/index.js";
 
 const MAX_TOOL_NAME_LEN = 128;
 
+// Rename over-long tool names deterministically so the response side can put
+// the caller's spelling back (see toolNameLimit.js). A bare slice() loses the
+// mapping, which made the client receive a tool it never declared.
+import { shortenToolName } from "../../utils/toolNameLimit.js";
+
 /**
  * Convert OpenAI Responses API request to OpenAI Chat Completions format
  */
@@ -427,14 +432,17 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
 
   // Convert tools format
   if (body.tools && Array.isArray(body.tools)) {
+    const nameMap = new Map();
     result.tools = body.tools.map(tool => {
       if (tool.type === OPENAI_BLOCK.FUNCTION) {
         // Strict upstreams reject nameless/overlong tool declarations
         const name = typeof tool.function?.name === "string" ? tool.function.name.trim() : "";
         if (!name) return null;
+        const shortened = shortenToolName(name, MAX_TOOL_NAME_LEN) || name;
+        if (shortened !== name) nameMap.set(shortened, name);
         return {
           type: OPENAI_BLOCK.FUNCTION,
-          name: name.slice(0, MAX_TOOL_NAME_LEN),
+          name: shortened,
           description: String(tool.function.description || ""),
           parameters: normalizeToolParameters(tool.function.parameters),
           strict: tool.function.strict
@@ -442,6 +450,7 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
       }
       return tool;
     }).filter(Boolean);
+    if (nameMap.size) result._toolNameMap = nameMap;
   }
 
   // Pass through other relevant fields

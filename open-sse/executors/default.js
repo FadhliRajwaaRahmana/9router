@@ -10,6 +10,9 @@ import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 import { extractClaudeSessionIdFromUserId } from "../utils/claudeCloaking.js";
 import { REASONING_TOKEN_FLOOR, REASONING_FLOOR_HOSTS } from "../config/runtimeConfig.js";
 import { addHeaders as addBuddyHeaders, isBuddyProvider } from "../utils/buddyRequestContext.js";
+import { shortenToolNamesInBody } from "../utils/toolNameLimit.js";
+import { recordRenamedToolNames } from "../utils/opencodeFingerprint.js";
+import { TOOL_NAME_MAX_BY_PROVIDER } from "../config/runtimeConfig.js";
 
 // Auth header descriptors — derived from registry transport.auth, fallback to hardcoded defaults.
 const BEARER = { combined: true, header: "Authorization", scheme: "bearer" };
@@ -133,6 +136,19 @@ export class DefaultExecutor extends BaseExecutor {
     if (injected && typeof injected === "object") {
       stripUnsupportedParams(this.provider, model, injected);
       applyReasoningTokenFloor(this.provider, injected, credentials);
+
+      // Upstreams with a tool-name ceiling (Meta/muse: 64) reject the whole
+      // request when one MCP tool name is longer. Shorten here and hand the map
+      // to chatCore so the client still sees its own spelling in the response.
+      const maxToolName = TOOL_NAME_MAX_BY_PROVIDER[this.provider];
+      if (maxToolName) {
+        const map = shortenToolNamesInBody(injected, maxToolName);
+        // `injected` is a NEW object, so a WeakMap keyed on the caller's
+        // translatedBody would never see this map. Carry it on the body under
+        // the same internal field the translators use; chatCore strips it
+        // before dispatch and threads it into the response state.
+        if (map) injected._toolNameMap = map;
+      }
     }
 
     return injected;

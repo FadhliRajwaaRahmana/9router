@@ -1,5 +1,57 @@
 # Changelog
 
+# v0.5.150 (2026-10-27) — 9router-imagefix
+
+## Fix: nama tool MCP panjang membuat seluruh request ditolak
+
+Meta (muse) menolak **seluruh request** bila satu nama tool melewati 64 karakter:
+
+```
+HTTP 400 {"error":{"message":"`name` must be at most 64 characters, got 74",
+                   "param":"name","type":"invalid_request_error"}}
+```
+
+Klien menyusun nama tool MCP sebagai `mcp__<server>__<tool>`, jadi satu tool
+dengan nama panjang mematikan **semua model** di provider itu — bukan hanya
+tool tersebut. Terukur pada MCP aiven:
+
+| panjang | tool |
+|---|---|
+| 74 | `mcp__aiven__aiven_vcs_integration_repository_container_manifest_files_list` |
+| 68 | `mcp__aiven__aiven_vcs_integration_repository_scan_container_manifest` |
+
+CodeBuddy menerima nama 74 karakter yang sama (HTTP 200), jadi batas ini
+per-upstream — bukan aturan global.
+
+`open-sse/utils/toolNameLimit.js` memendekkan nama secara deterministik (prefix
+dipertahankan, sufiks = hash 8 karakter dari nama asli sehingga dua nama panjang
+berbeda tidak bertabrakan), lalu memulihkan ejaan asli pada respons lewat
+`toolNameMap`. Batas per provider ada di `TOOL_NAME_MAX_BY_PROVIDER`
+(`runtimeConfig.js`), saat ini `muse: 64`.
+
+Sekalian diperbaiki: `openai-responses.js` memotong nama dengan `slice()` tanpa
+menyimpan pemetaan, sehingga klien menerima tool yang tidak pernah ia deklarasikan.
+Sekarang pemotongan memakai helper yang sama dan mencatat map-nya.
+
+## Bukti
+
+| skenario | sebelum | sesudah |
+|---|---|---|
+| muse + nama 74 char | HTTP 400 | HTTP 200 |
+| tool call kembali ke klien | nama terpotong/hilang | **nama asli 74 char** |
+| klien OpenAI (`/v1/chat/completions`) | 400 | `finish: tool_calls`, nama asli |
+| klien Claude (`/v1/messages`) | 400 | `tool_use` nama asli, blok seimbang |
+
+`_toolNameMap` juga tidak lagi bocor ke upstream — sempat muncul sebagai
+`400 unknown parameter _toolNameMap` pada percobaan pertama.
+
+## Verifikasi
+
+- `tests/unit/tool-name-limit.test.js`: 7/7 lulus (5 unit helper + 2 integrasi
+  translator, termasuk bukti nama >128 dipetakan)
+- Regresi unit: 64 gagal → 58 gagal, tanpa nama gagal baru
+- Live muse dengan 2 akun API key, kedua jalur klien
+
 # v0.5.149 (2026-10-27) — 9router-imagefix
 
 ## Fix: klien Claude menggantung saat upstream berakhir tanpa finish_reason

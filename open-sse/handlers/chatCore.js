@@ -416,9 +416,21 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     providerHeaders = result.headers;
     finalBody = result.transformedBody;
     providerResponseFormat = result.responseFormat || targetFormat;
-    const renamedToolNames = takeRenamedToolNames(translatedBody);
+    // An executor may rename tools on the object it RETURNS (DefaultExecutor
+    // rebuilds the body via injectReasoningContent), so the map can live on
+    // finalBody rather than the translatedBody we handed in. Check both, plus
+    // the map BaseExecutor lifts off the body before dispatch.
+    const renamedToolNames = takeRenamedToolNames(translatedBody) || takeRenamedToolNames(finalBody);
     if (renamedToolNames?.size) {
       toolNameMap = new Map([...(toolNameMap || []), ...renamedToolNames]);
+    }
+    if (result.toolNameMap?.size) {
+      toolNameMap = new Map([...(toolNameMap || []), ...result.toolNameMap]);
+    }
+    // Internal bookkeeping must never reach the upstream request.
+    if (finalBody && typeof finalBody === "object" && finalBody._toolNameMap) {
+      toolNameMap = new Map([...(toolNameMap || []), ...finalBody._toolNameMap]);
+      delete finalBody._toolNameMap;
     }
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
