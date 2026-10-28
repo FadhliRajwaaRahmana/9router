@@ -67,6 +67,13 @@ const COOLDOWN = {
 // the connection may still serve its other models. See ERROR_RULES below.
 const CODEBUDDY_LOCK_MS = 15 * 1000;
 
+// CodeBuddy account-restriction lock (code 11140 "unusual activity"). LONG on
+// purpose, and the opposite intent from the channel lock above: a restricted
+// account that keeps getting probed every 15s looks exactly like the "unusual
+// activity" that triggered the restriction, so hammering it deepens the ban.
+// Park it for 24h; other accounts on the same provider still serve traffic.
+const CODEBUDDY_RESTRICTED_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Unified error classification rules.
  * Checked top-to-bottom: text rules first (by order), then status rules.
@@ -87,6 +94,19 @@ export const ERROR_RULES = [
   { text: "quota exceeded",           backoff: true },
   { text: "capacity",                 backoff: true },
   { text: "overloaded",               backoff: true },
+
+  // CodeBuddy account restriction (HTTP 403, code 11140 "unusual activity").
+  // MUST come before the generic "request illegal" rules below: the 11140
+  // body also contains the phrase "request illegal" (msg field), so without
+  // these specific rules a restricted account would fall into the 15s channel
+  // lock and get hammered every 15s across every model — the exact pattern
+  // that deepens the restriction instead of letting it lapse.
+  { provider: "codebuddy-intl", text: "11140", cooldownMs: CODEBUDDY_RESTRICTED_MS },
+  { provider: "codebuddy-intl", text: "unusual activity", cooldownMs: CODEBUDDY_RESTRICTED_MS },
+  { provider: "codebuddy-intl", text: "restricted", cooldownMs: CODEBUDDY_RESTRICTED_MS },
+  { provider: "codebuddy-cn", text: "11140", cooldownMs: CODEBUDDY_RESTRICTED_MS },
+  { provider: "codebuddy-cn", text: "unusual activity", cooldownMs: CODEBUDDY_RESTRICTED_MS },
+  { provider: "codebuddy-cn", text: "限制使用", cooldownMs: CODEBUDDY_RESTRICTED_MS },
 
   // CodeBuddy channel check (HTTP 400, code 11128 "request illegal"). The
   // gateway refuses calls it can't attribute to an official client, so this

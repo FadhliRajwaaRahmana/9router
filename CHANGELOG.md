@@ -1,5 +1,42 @@
 # Changelog
 
+# v0.5.154 (2026-10-29) — 9router-imagefix
+
+## Fix: akun CodeBuddy yang dibatasi (11140) tidak lagi dipukul tiap 15 detik
+
+Dua koneksi `codebuddy-intl` mencatat 11140 "unusual activity" — pembatasan di
+sisi akun CodeBuddy, bukan format request. Investigasi live membuktikan
+request dengan 8 header channel lengkap tetap 11140 (artinya lolos channel
+check; yang menahan murni keputusan server atas akun tersebut), dan kedua JWT
+masih berlaku sampai 2027.
+
+Dua sebab di kode yang memperparah:
+
+1. `ERROR_RULES` mencocokkan teks "request illegal" untuk 11140 maupun 11128,
+   sehingga akun yang dibatasi hanya dikunci 15 detik — lalu diprobe lagi
+   tiap 15 detik di semua model. Itu persis pola "unusual activity" yang
+   memperdalam pembatasan, bukan membiarkannya reda.
+2. User-Agent OAuth (2.63.2) tidak sama dengan User-Agent chat (2.108.1);
+   klien campuran versi mudah dideteksi sebagai non-resmi.
+
+Perubahan:
+
+- `open-sse/config/errorConfig.js` — aturan 11140/"unusual activity"/"restricted"/
+  "限制使用" ditempatkan SEBELUM "request illegal" generik, dengan
+  `CODEBUDDY_RESTRICTED_MS` 24 jam. Aturan 11128 tidak berubah (15 detik).
+- `open-sse/providers/registry/codebuddy-intl.js` + `codebuddy-cn.js` —
+  User-Agent OAuth disamakan dengan chat (2.108.1).
+
+Verifikasi: 4 test baru hijau, 12 test terkait hijau, klasifikasi nyata
+`11140 -> 86400000` dan `11128 -> 15000` terkonfirmasi lewat kode router
+yang sama.
+
+Catatan jujur: ini menghentikan pendarahan (tidak lagi memperparah
+pembatasan) dan menyeragamkan identitas klien, tapi TIDAK membuka blokir
+yang sudah aktif — pembukaannya wewenang CodeBuddy (banding via aplikasi
+atau tunggu reda). Uji ulang memakai endpoint nyata setelah cooldown
+berlaku.
+
 # v0.5.153 (2026-10-28) — 9router-imagefix
 
 ## Fix: tombol "Check" menolak API key Muse (Meta) yang sebenarnya valid

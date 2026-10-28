@@ -68,7 +68,10 @@ export default {
     stateUrl: "https://www.codebuddy.ai/v2/plugin/auth/state",
     tokenUrl: "https://www.codebuddy.ai/v2/plugin/auth/token",
     refreshUrl: "https://www.codebuddy.ai/v2/plugin/auth/token/refresh",
-    userAgent: "IDE/2.63.2 CodeBuddy/2.63.2",
+    // MUST match the chat transport User-Agent above (IDE/2.108.1): a client
+    // that chats as 2.108.1 but refreshes tokens as 2.63.2 is trivially
+    // detectable as a mixed-version (non-official) client.
+    userAgent: "IDE/2.108.1 CodeBuddy/2.108.1",
     platform: "ide",
     pollInterval: 5000,
   },
