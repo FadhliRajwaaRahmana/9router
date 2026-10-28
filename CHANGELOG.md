@@ -1,5 +1,38 @@
 # Changelog
 
+# v0.5.152 (2026-10-28) — 9router-imagefix
+
+## Fix: budget floor 8192 untuk reasoning `max` Muse (anti "berhenti sendiri")
+
+Muse Spark dengan `reasoning_effort: "max"` menelan seluruh budget untuk
+hidden reasoning lalu mengembalikan turn kosong — klien (Claude Code) melihat
+"berhenti sendiri". Terukur live 2026-10-28: soal `2+2` saja menelan 385 token
+reasoning; esai 5 paragraf dengan `max_tokens: 2048` mengembalikan 1 event +
+konten kosong, sementara `xhigh` pada prompt yang sama mengembalikan esai
+lengkap (2102 karakter).
+
+Kegagalannya tidak deterministik — kombinasi max/2048 yang sama berhasil pada
+prompt lain — jadi floor dibuat murah hati, bukan pas-pasan.
+
+Perubahan di `open-sse/config/runtimeConfig.js` + `open-sse/executors/default.js`:
+
+```js
+export const META_MAX_EFFORT_FLOOR = envPositiveInt("META_MAX_EFFORT_FLOOR", 8192);
+export const META_EFFORT_PROVIDERS = new Set(["muse"]);
+```
+
+Hanya menyentuh effort `max` di provider `muse` dengan budget eksplisit di
+bawah floor (`max_output_tokens` / `max_completion_tokens` / `max_tokens`).
+`xhigh` ke bawah dan provider lain tidak tersentuh. Bisa dioverride via env
+`META_MAX_EFFORT_FLOOR`.
+
+## Verifikasi
+
+- `tests/unit/muse-max-effort-floor.test.js`: 6/6 lulus (max kecil dinaikkan,
+  max besar tidak diturunkan, xhigh/tanpa effort/tanpa budget/provider lain
+  tidak tersentuh)
+- Live: esai yang kemarin gagal (1 event kosong) kini 200 event + 2752 karakter
+
 # v0.5.151 (2026-10-27) — 9router-imagefix
 
 ## Fitur: level thinking `max` untuk semua model Muse
