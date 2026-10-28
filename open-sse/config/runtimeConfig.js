@@ -117,6 +117,21 @@ export const REASONING_FLOOR_HOSTS = new Set([
   "api.river.ai",
 ]);
 
+// ─── Meta max-effort token floor ───────────────────────────────────────────
+// Muse Spark with reasoning_effort=max burns the whole budget on hidden
+// reasoning, then returns an empty turn (finish stop, content ""). Measured
+// live 2026-10-28 via 9router: a trivial "2+2=?" consumed 385 reasoning tokens;
+// a 5-paragraph essay with max_tokens 2048 returned 1 event + empty content
+// while xhigh on the same prompt returned 2102 chars. The failure is NOT
+// deterministic — the same max/2048 combo succeeded on a second prompt — so
+// the floor must be generous, not exact.
+// Env: META_MAX_EFFORT_FLOOR.
+export const META_MAX_EFFORT_FLOOR = envPositiveInt("META_MAX_EFFORT_FLOOR", 8192);
+// Providers whose reasoning runs on Meta's Responses API.
+export const META_EFFORT_PROVIDERS = new Set([
+  "muse",
+]);
+
 // ─── Tool-name length ceiling per provider ───────────────────────────────
 // Some upstreams reject a request outright when a tool name is too long:
 //   Meta (muse) → HTTP 400 `name must be at most 64 characters, got 74`

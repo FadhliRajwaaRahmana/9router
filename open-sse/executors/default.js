@@ -8,7 +8,7 @@ import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 import { extractClaudeSessionIdFromUserId } from "../utils/claudeCloaking.js";
-import { REASONING_TOKEN_FLOOR, REASONING_FLOOR_HOSTS } from "../config/runtimeConfig.js";
+import { REASONING_TOKEN_FLOOR, REASONING_FLOOR_HOSTS, META_MAX_EFFORT_FLOOR, META_EFFORT_PROVIDERS } from "../config/runtimeConfig.js";
 import { addHeaders as addBuddyHeaders, isBuddyProvider } from "../utils/buddyRequestContext.js";
 import { shortenToolNamesInBody } from "../utils/toolNameLimit.js";
 import { recordRenamedToolNames } from "../utils/opencodeFingerprint.js";
@@ -107,6 +107,31 @@ function applyReasoningTokenFloor(provider, body, credentials) {
   }
 }
 
+// Raise — never lower — the completion budget when a Meta Responses-API model
+// runs at reasoning_effort=max. Max burns the whole budget on hidden reasoning
+// (measured 2026-10-28: 385 reasoning tokens for "2+2=?"; a 5-paragraph essay
+// with max_tokens 2048 returned 1 event + empty content while xhigh on the
+// same prompt returned 2102 chars). xhigh and below are untouched — only max
+// triggers the floor, and only when the client set an explicit small budget.
+function applyMetaMaxEffortFloor(provider, model, body) {
+  if (!META_EFFORT_PROVIDERS.has(provider)) return;
+
+  // Effort bisa di `reasoning.effort` (setelah fold) atau masih top-level
+  // `reasoning_effort` (sebelum fold, tergantung jalur translator).
+  const nested = typeof body?.reasoning === "object" ? body.reasoning?.effort : null;
+  const top = body?.reasoning_effort;
+  const effort = typeof nested === "string" ? nested : top;
+  if (typeof effort !== "string" || effort.toLowerCase() !== "max") return;
+
+  // Responses wire uses max_output_tokens; Chat wire uses max_tokens /
+  // max_completion_tokens. Raise whichever the client constrained.
+  for (const field of ["max_output_tokens", "max_completion_tokens", "max_tokens"]) {
+    if (typeof body[field] === "number" && body[field] < META_MAX_EFFORT_FLOOR) {
+      body[field] = META_MAX_EFFORT_FLOOR;
+    }
+  }
+}
+
 export class DefaultExecutor extends BaseExecutor {
   constructor(provider) {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
@@ -136,6 +161,10 @@ export class DefaultExecutor extends BaseExecutor {
     if (injected && typeof injected === "object") {
       stripUnsupportedParams(this.provider, model, injected);
       applyReasoningTokenFloor(this.provider, injected, credentials);
+      // Meta max-effort floor: max burns the budget on hidden reasoning and
+      // returns an empty turn (client sees "berhenti sendiri"). Raise small
+      // explicit budgets to META_MAX_EFFORT_FLOOR; xhigh and below untouched.
+      applyMetaMaxEffortFloor(this.provider, model, injected);
 
       // Upstreams with a tool-name ceiling (Meta/muse: 64) reject the whole
       // request when one MCP tool name is longer. Shorten here and hand the map
