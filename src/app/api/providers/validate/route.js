@@ -6,6 +6,7 @@ import { resolveOllamaLocalHost, resolveXiaomiTokenplanBaseUrl, PROVIDERS } from
 import { openaiToCommandCodeRequest } from "open-sse/translator/request/openai-to-commandcode.js";
 import { resolveQoderCredentials, resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { normalizeProviderId } from "@/lib/providerNormalization";
+import { resolveValidateProbeUrl, isValidationSupported } from "open-sse/services/providerValidateProbe.js";
 
 // Probe a webSearch/webFetch provider using its searchConfig/fetchConfig.
 // Returns true if API key is accepted (status !== 401 && !== 403).
@@ -598,9 +599,13 @@ export async function POST(request) {
         }
 
         default: {
-          // Generic probe for OpenAI-compatible providers (config-driven from PROVIDERS)
+          // Generic probe for OpenAI-compatible providers (config-driven from PROVIDERS).
+          //
+          // Deliberately does NOT gate on `cfg.format === "openai"`: providers whose
+          // transport is `openai-responses` (muse/Meta) are just as validatable, and
+          // the old format gate made the dashboard show "Invalid" for a working key.
           const cfg = PROVIDERS[provider];
-          if (!cfg || cfg.format !== "openai" || !cfg.baseUrl) {
+          if (!isValidationSupported(cfg)) {
             return NextResponse.json({ error: "Provider validation not supported" }, { status: 400 });
           }
           if (cfg.noAuth) {
@@ -611,26 +616,41 @@ export async function POST(request) {
           const headers = { "Content-Type": "application/json", ...(cfg.headers || {}) };
           if (cfg.authHeader === "x-api-key") headers["X-API-Key"] = apiKey;
           else headers["Authorization"] = `Bearer ${apiKey}`;
-          // Try /models first (fast GET), fallback to chat probe on ambiguous response
-          const modelsUrl = cfg.baseUrl.replace(/\/chat\/completions$/, "/models").replace(/\/chatbot$/, "/models");
+
+          // Prefer the registry-declared validateUrl. Guessing `/models` from baseUrl
+          // produced `.../v1/responses` for muse — a POST-only endpoint that answers
+          // GET with 405, so the probe always came back ambiguous.
+          const modelsUrl = resolveValidateProbeUrl(cfg);
           let probeOk = null;
-          try {
-            const probeRes = await fetch(modelsUrl, { headers, signal: AbortSignal.timeout(8000) });
-            if (probeRes.status === 401 || probeRes.status === 403) probeOk = false;
-            else if (probeRes.ok) probeOk = true;
-          } catch { /* fallback to chat */ }
+          if (modelsUrl) {
+            try {
+              const probeRes = await fetch(modelsUrl, { headers, signal: AbortSignal.timeout(8000) });
+              if (probeRes.status === 401 || probeRes.status === 403) probeOk = false;
+              else if (probeRes.ok) probeOk = true;
+              else if (probeRes.status === 400 || probeRes.status === 404 || probeRes.status === 405) {
+                // Auth-passing endpoints answer these for shape/method reasons, not auth.
+                probeOk = true;
+              }
+            } catch { /* fallback to chat probe */ }
+          }
           if (probeOk !== null) {
             isValid = probeOk;
             break;
           }
-          // Fallback: minimal chat probe
+          // Fallback: minimal probe against the transport baseUrl. Responses-format
+          // providers take {input, max_output_tokens}; everything else takes chat shape.
+          const isResponsesFormat = cfg.format === "openai-responses";
           const defaultModel = getDefaultModel(provider) || "test";
+          const probeBody = isResponsesFormat
+            ? { model: defaultModel, input: "ping", max_output_tokens: 16 }
+            : { model: defaultModel, messages: [{ role: "user", content: "ping" }], max_tokens: 1 };
           const chatRes = await fetch(cfg.baseUrl, {
             method: "POST",
             headers,
-            body: JSON.stringify({ model: defaultModel, messages: [{ role: "user", content: "ping" }], max_tokens: 1 }),
+            body: JSON.stringify(probeBody),
             signal: AbortSignal.timeout(10000),
           });
+          // 400 here means the body shape was rejected, not the credential.
           isValid = chatRes.status !== 401 && chatRes.status !== 403;
           break;
         }

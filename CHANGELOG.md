@@ -1,5 +1,42 @@
 # Changelog
 
+# v0.5.153 (2026-10-28) — 9router-imagefix
+
+## Fix: tombol "Check" menolak API key Muse (Meta) yang sebenarnya valid
+
+Dashboard menampilkan **Invalid** untuk API key Meta/Muse yang benar-benar bekerja.
+Terukur live 2026-10-28: key `LLM|1479825950707509|...` menjawab HTTP 200 dari
+`POST https://api.meta.ai/v1/responses`, tapi `POST /api/providers/validate`
+membalas 400 "Provider validation not supported", yang oleh UI diterjemahkan
+jadi "Invalid".
+
+Dua sebab, keduanya di cabang `default` route itu:
+
+1. **Gerbang format.** `cfg.format !== "openai"` menolak semua provider berformat
+   `openai-responses` — termasuk muse. Format transport tidak ada hubungannya
+   dengan bisa-tidaknya kredensial divalidasi.
+2. **URL probe ditebak.** `{baseUrl}/models` dirakit dengan operasi string,
+   sehingga muse (`baseUrl: .../v1/responses`) tetap diprobe ke `/v1/responses`
+   — endpoint POST-only yang menjawab GET dengan 405. Registry sebenarnya sudah
+   menyimpan URL probe yang benar di `validateUrl`
+   (muse -> https://api.meta.ai/v1/models).
+
+Perubahan:
+
+- `open-sse/services/providerValidateProbe.js` (baru) —
+  `resolveValidateProbeUrl()` memprioritaskan `validateUrl` dari registry,
+  menurunkan `/models` dari `/chat/completions` dan `/chatbot`, dan
+  mengembalikan `null` untuk baseUrl `/responses` (POST-only).
+  `isValidationSupported()` hanya mensyaratkan `baseUrl`, bukan `format`.
+- `src/app/api/providers/validate/route.js` — memakai modul di atas; status
+  400/404/405 dari probe dianggap "auth lolos" (bukan penolakan kredensial);
+  fallback POST memakai bentuk body sesuai format (`input` +
+  `max_output_tokens` untuk `openai-responses`, bentuk chat untuk sisanya).
+
+Verifikasi: 10 test baru (`tests/unit/provider-validate-probe-url.test.js`)
+hijau, 64 test terkait hijau, dan probe langsung ke muse dengan key asli
+mengembalikan `isValid: true` (sebelumnya `false`).
+
 # v0.5.152 (2026-10-28) — 9router-imagefix
 
 ## Fix: budget floor 8192 untuk reasoning `max` Muse (anti "berhenti sendiri")
