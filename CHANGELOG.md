@@ -1,5 +1,17 @@
 # Changelog
 
+# v0.5.155 (2026-10-29) — 9router-imagefix
+
+## Fix: paket global crash saat start (`ERR_INVALID_PACKAGE_CONFIG`)
+
+Satu byte `0x97` (Windows-1252, sisa em dash) nyasar di `app/package.json`
+hasil build 0.5.154, sehingga Node menolak seluruh file dan server tidak bisa
+start (`Server exited (code=1)` berulang).
+
+Perubahan: byte diperbaiki di `package.json` repo (em dash UTF-8 yang benar),
+plus catatan agar tidak terulang. Tidak ada perubahan perilaku lain dari
+0.5.154 — ini rilis perbaikan kemasan.
+
 # v0.5.154 (2026-10-29) — 9router-imagefix
 
 ## Fix: akun CodeBuddy yang dibatasi (11140) tidak lagi dipukul tiap 15 detik
