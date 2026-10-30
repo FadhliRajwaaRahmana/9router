@@ -140,18 +140,6 @@ import pMuseAi from "./muse-ai.js";
 // tokenharbor, jadi keduanya diberi nama eksplisit.
 import pFreebuff from "./freebuff.js";
 import pMetaCode from "./meta-code.js";
-import p134 from "./minimax-code.js";
-import p135 from "./minimax-code-global.js";
-import p136 from "./bedrock.js";
-import p137 from "./bedrock-xai.js";
-import p138 from "./nous.js";
-import p140 from "./deepseek-web.js";
-import p143 from "./gemini-web.js";
-import p144 from "./muse-web.js";
-import p146 from "./chatgpt-web.js";
-import p147 from "./veoaifree-web.js";
-import p151 from "./uc-web.js";
-import p152 from "./runcrate.js";
 import p153 from "./nace.js";
 export default [
   p0,
@@ -289,17 +277,6 @@ export default [
   pMuseAi,
   pFreebuff,
   pMetaCode,
-  p134,
-  p135,
-  p136,
-  p137,
-  p138,
-  p140,
-  p143,
-  p144,
-  p146,
-  p147,
-  p151,
-  p152,
+
   p153,
 ];

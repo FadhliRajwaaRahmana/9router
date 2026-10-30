@@ -68,6 +68,11 @@ export function stripUnsupportedParams(provider, model, body) {
   for (const rule of STRIP_RULES) {
     if (rule.provider && rule.provider !== provider) continue;
     if (!matches(rule, model)) continue;
+    for (const [from, to] of Object.entries(rule.renameParams || {})) {
+      if (body[from] === undefined) continue;
+      if (body[to] === undefined) body[to] = body[from];
+      delete body[from];
+    }
     for (const key of rule.drop || []) {
       if (body[key] !== undefined) delete body[key];
     }

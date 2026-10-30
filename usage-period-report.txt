@@ -1,0 +1,10 @@
+period | promptTokens | requests | models | providers
+today  |     37375774 |     60 | 1 | 1
+24h    |    336430602 |   1164 | 2 | 2
+7d     |   2819467297 |   7979 | 19 | 8
+30d    |  15319381033 |  44348 | 74 | 23
+60d    |  25014288577 |  78375 | 151 | 37
+all    |  33154164601 | 112024 | 213 | 53
+
+nilai promptTokens unik: 6 dari 6 period
+✅ backend mengembalikan angka BERBEDA per period
