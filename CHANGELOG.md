@@ -1,6 +1,46 @@
 # Changelog
 # Unreleased
 
+# v0.5.156 (2026-10-31) — 9router-imagefix
+
+## Port upstream v0.5.111–112 (selektif)
+
+Di-port 9 commit upstream yang relevan. Set test gagal tidak berubah: 65 sebelum,
+65 sesudah — nol regresi.
+
+**Masuk:**
+
+- **Muse bulk-add** (`a199d777`): string `LLM|id|secret` diperlakukan opaque dan
+  diberi nama otomatis LLM 1, LLM 2, … — sebelumnya dipecah pada pipe pertama
+  sehingga key Muse tercatat dengan nama salah dan isinya terpotong.
+- **CodeBuddy channel check** (`3fd925ab`): kirim `X-Request-ID`,
+  `X-Conversation-ID`, `X-Conversation-Request-ID`, `X-Conversation-Message-ID`;
+  tanpa header ini gateway menolak dengan 400 / 11128 "request illegal".
+- **NVIDIA NIM** (`ced0cf6e`): normalisasi `reasoning` → `reasoning_content` pada
+  riwayat asisten, mencegah 400 duplicate-field.
+- **Gemini** (`8db1f4ae`): enforce protobuf type predicates pada schema `items`/`properties`.
+- **GitHub Copilot** (`f3e1f716`): aturan thinking Claude 5.5 untuk id bertitik
+  (`claude-opus-5.5`, `claude-sonnet-5.5`); thinking-off tidak lagi mengirim
+  `thinking.type: disabled` yang ditolak 400.
+- **OpenAI `max_tokens`** (`paramSupport`): rename ke `max_completion_tokens`; logika
+  `renameParams` sebelumnya dideklarasikan di aturan tetapi tidak pernah diterapkan.
+- **CommandCode** (`b1effa03`): header disamakan dengan CLI resmi 1.88.0.
+- **Nace Drex** (`f7f6f5ed`): provider baru di lane System One.
+- **Codex** (`acb3c080`): `gpt-6.1-terra`.
+- **Chat** (`56dbf466`): error SSE pada respons non-streaming diteruskan dengan
+  status upstream (4xx/5xx) alih-alih ditelan menjadi 502 generik.
+
+**Sengaja dilewati:**
+
+- **DeepSeek PoW** (`d7bb71ce`): fork ini tidak memiliki `deepseek-pow.js` maupun
+  pemakainya, sehingga file hash pengganti akan menjadi kode mati.
+- **MiniMax Code lease** (`85d73bd6`): fork ini menghapus provider `minimax-code`;
+  menambahkannya kembali adalah keputusan terpisah, bukan bagian port.
+
+**Perbaikan fork yang dipertahankan:** aturan 11140 (kunci 24 jam, bukan 15 detik),
+User-Agent OAuth CodeBuddy 2.108.1, floor budget 8192 untuk Muse `max`, dan
+`providerValidateProbe` untuk tombol Check.
+
 ## Fixes
 - **NVIDIA NIM**: normalize assistant `reasoning` aliases to `reasoning_content` before forwarding, avoiding NIM's duplicate-field 400 when clients send both.
 # v0.5.111 (2026-10-26)
