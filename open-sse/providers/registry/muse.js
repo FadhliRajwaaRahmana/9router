@@ -42,7 +42,10 @@ export default {
     forceStream: true,
     // Meta 400s on Chat-style top-level `reasoning_effort`; it must be nested
     // as `reasoning.effort` — sama seperti meta-code.
-    quirks: { foldReasoningEffort: true },
+    // labelCommentaryPhase: Claude Code tidak mengirim `phase`, jadi preamble
+    // sebelum tool call sampai ke Meta sebagai jawaban akhir dan model belajar
+    // berhenti setelah mengumumkan langkah (lihat concerns/responsesPhase.js).
+    quirks: { foldReasoningEffort: true, labelCommentaryPhase: true },
     validateUrl: "https://api.meta.ai/v1/models",
     modelsUrl: "https://api.meta.ai/v1/models",
     auth: { combined: true, header: "Authorization", scheme: "bearer", hooks: ["museHeaders"] },

@@ -1,6 +1,26 @@
 # Changelog
 # Unreleased
 
+# v0.5.157 (2026-10-31) — 9router-imagefix
+
+## Muse: tidak lagi "berhenti sendiri" setelah mengumumkan langkah
+
+- **Phase `commentary` dipulihkan** (`concerns/responsesPhase.js`, quirk
+  `labelCommentaryPhase` di `muse` + `meta-code`). Meta membaca pesan asisten
+  tanpa `phase` sebagai jawaban akhir; Claude Code (format Anthropic) tidak
+  punya field itu, jadi setiap preamble sebelum tool call ("Saya cek dulu…")
+  sampai ke Meta sebagai giliran yang sudah selesai, dan di sesi panjang model
+  meniru pola itu: mengumumkan langkah lalu berhenti tanpa tool call. Diukur
+  pada 4 titik henti asli dari transkrip (8 sampel per titik): 16/32 balasan
+  berhenti tanpa tool call sebelum perbaikan, 10/64 sesudah. Hanya
+  `commentary` yang disimpulkan (pesan yang rangkaiannya berakhir di tool
+  call); `phase` dari klien tidak pernah ditimpa.
+- **Nama tool panjang di riwayat ikut dipendekkan** (`toolNameLimit.js`).
+  Sebelumnya hanya deklarasi `tools[]` yang dipendekkan ke 64; setelah tool
+  bernama panjang (mis. MCP aiven, 74 karakter) dipanggil sekali, riwayatnya
+  dikirim ulang dengan ejaan panjang dan Meta menolak seluruh request dengan
+  400 `name must be at most 64 characters` — sesi macet mulai giliran itu.
+
 # v0.5.156 (2026-10-31) — 9router-imagefix
 
 ## Port upstream v0.5.111–112 (selektif)

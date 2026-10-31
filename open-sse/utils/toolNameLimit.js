@@ -18,10 +18,14 @@
  * stays recognisable, whereas cutting to the tail would leave only boilerplate.
  */
 import crypto from "node:crypto";
+import { ROLE, CLAUDE_BLOCK, RESPONSES_ITEM } from "../translator/schema/index.js";
 
 /** Upstreams commonly cap tool names at 64; keep a little headroom for the hash. */
 const HASH_LEN = 8;
 const SEPARATOR = "_";
+
+/** Responses history items that carry a client tool name. */
+const HISTORY_CALL_ITEMS = new Set([RESPONSES_ITEM.FUNCTION_CALL, RESPONSES_ITEM.CUSTOM_TOOL_CALL]);
 
 /** Deterministic 8-hex-char digest of the original name. */
 function shortHash(name) {
@@ -43,12 +47,14 @@ export function shortenToolName(name, maxLen) {
 }
 
 /**
- * Rename every over-long tool in an OpenAI-shaped `tools[]` array in place.
+ * Rename every over-long tool name in a request body in place.
  *
  * Returns a Map of `shortName → originalName` for the response side, or null
- * when nothing changed. Tool names appear in exactly one place in the request
- * (the `function.name` field); tool_choice names are renamed too so a pinned
- * tool still resolves.
+ * when nothing changed. Names are renamed in the declarations (`tools[]`), in
+ * `tool_choice`, and in the replayed history: once a long-named tool has been
+ * called, the client resends that call with its own (long) spelling, and Meta
+ * validates history names too — measured 400 `name must be at most 64
+ * characters, got 74` on the turn after the first call.
  *
  * @param {object} body - request body (mutated)
  * @param {number} maxLen - upstream limit
@@ -85,6 +91,43 @@ export function shortenToolNamesInBody(body, maxLen) {
   if (choice && typeof choice === "object") {
     if (typeof choice.name === "string") choice.name = rename(choice.name);
     if (typeof choice.function?.name === "string") choice.function.name = rename(choice.function.name);
+  }
+
+  // Replayed calls. The rename is deterministic, so history and declarations
+  // land on the same short name. History items may be the caller's objects,
+  // reused across retries, so a renamed item is replaced rather than mutated.
+  // Responses: input[] function_call / custom_tool_call items.
+  if (Array.isArray(body.input)) {
+    body.input = body.input.map((item) => {
+      if (!HISTORY_CALL_ITEMS.has(item?.type) || typeof item.name !== "string") return item;
+      const name = rename(item.name);
+      return name === item.name ? item : { ...item, name };
+    });
+  }
+  // Chat: assistant tool_calls[].function.name. Anthropic: tool_use blocks.
+  if (Array.isArray(body.messages)) {
+    body.messages = body.messages.map((msg) => {
+      if (msg?.role !== ROLE.ASSISTANT) return msg;
+      let next = msg;
+      if (Array.isArray(msg.tool_calls)) {
+        const calls = msg.tool_calls.map((call) => {
+          const fn = call?.function;
+          if (typeof fn?.name !== "string") return call;
+          const name = rename(fn.name);
+          return name === fn.name ? call : { ...call, function: { ...fn, name } };
+        });
+        if (calls.some((call, i) => call !== msg.tool_calls[i])) next = { ...next, tool_calls: calls };
+      }
+      if (Array.isArray(msg.content)) {
+        const content = msg.content.map((block) => {
+          if (block?.type !== CLAUDE_BLOCK.TOOL_USE || typeof block.name !== "string") return block;
+          const name = rename(block.name);
+          return name === block.name ? block : { ...block, name };
+        });
+        if (content.some((block, i) => block !== msg.content[i])) next = { ...next, content };
+      }
+      return next;
+    });
   }
 
   return map.size > 0 ? map : null;

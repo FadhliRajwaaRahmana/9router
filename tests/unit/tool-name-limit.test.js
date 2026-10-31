@@ -32,6 +32,63 @@ describe("toolNameLimit", () => {
     shortenToolNamesInBody(body, 64);
     expect(body.tool_choice.function.name).toBe(body.tools[0].function.name);
   });
+
+  // Setelah tool bernama panjang dipanggil sekali, klien me-replay panggilan
+  // itu dengan ejaannya sendiri (panjang). Meta juga memvalidasi nama di
+  // riwayat — terukur 400 `name must be at most 64 characters, got 74` — jadi
+  // seluruh sesi gagal mulai giliran itu kalau riwayat tidak ikut dipendekkan.
+  it("nama di riwayat function_call (Responses) ikut dipendekkan, sama dengan deklarasi", () => {
+    const body = {
+      tools: [{ type: "function", name: LONG, parameters: {} }],
+      input: [
+        { type: "function_call", call_id: "c1", name: LONG, arguments: "{}" },
+        { type: "function_call_output", call_id: "c1", output: "[]" },
+      ],
+    };
+    shortenToolNamesInBody(body, 64);
+    expect(body.input[0].name.length).toBeLessThanOrEqual(64);
+    expect(body.input[0].name).toBe(body.tools[0].name);
+  });
+
+  it("nama di riwayat tool_calls (Chat) dan tool_use (Anthropic) ikut dipendekkan", () => {
+    const body = {
+      messages: [
+        { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: LONG, arguments: "{}" } }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: LONG, input: {} }] },
+      ],
+    };
+    const map = shortenToolNamesInBody(body, 64);
+    const short = shortenToolName(LONG, 64);
+    expect(body.messages[0].tool_calls[0].function.name).toBe(short);
+    expect(body.messages[1].content[0].name).toBe(short);
+    expect(map.get(short)).toBe(LONG);
+  });
+
+  it("riwayat bernama pendek tidak disentuh", () => {
+    const body = { input: [{ type: "function_call", call_id: "c1", name: "Read", arguments: "{}" }] };
+    expect(shortenToolNamesInBody(body, 64)).toBeNull();
+    expect(body.input[0].name).toBe("Read");
+  });
+});
+
+describe("DefaultExecutor muse: riwayat tool bernama panjang", () => {
+  it("dipendekkan sebelum dikirim agar Meta tidak menolak 400", async () => {
+    const { DefaultExecutor } = await import("open-sse/executors/default.js");
+    const body = {
+      model: "muse-spark-1.3-contributor",
+      tools: [{ type: "function", name: LONG, parameters: { type: "object", properties: {} } }],
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] },
+        { type: "function_call", call_id: "c1", name: LONG, arguments: "{}" },
+        { type: "function_call_output", call_id: "c1", output: "[]" },
+      ],
+    };
+    const out = new DefaultExecutor("muse").transformRequest("muse-spark-1.3-contributor", body, true, { apiKey: "test" });
+    const call = out.input.find((i) => i.type === "function_call");
+    expect(call.name.length).toBeLessThanOrEqual(64);
+    expect(call.name).toBe(out.tools[0].name);
+    expect(out._toolNameMap.get(call.name)).toBe(LONG);
+  }, 20000);
 });
 
 describe("integrasi translator openai-responses", () => {

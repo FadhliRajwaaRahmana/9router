@@ -34,7 +34,8 @@ export default {
     // Responses translator always sends stream:true; route JSON clients through SSE→JSON.
     forceStream: true,
     // Meta 400s on Chat-style top-level `reasoning_effort`; move it to `reasoning.effort`.
-    quirks: { foldReasoningEffort: true },
+    // labelCommentaryPhase: same Meta endpoint as muse — see concerns/responsesPhase.js.
+    quirks: { foldReasoningEffort: true, labelCommentaryPhase: true },
     // Bearer accessToken||apiKey is the BaseExecutor default — no auth block needed.
     validateUrl: "https://api.meta.ai/v1/models",
     // Model reasoning butuh lebih banyak waktu sebelum token pertama, jadi

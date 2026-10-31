@@ -8,6 +8,7 @@ import { buildClineHeaders } from "../shared/clineAuth.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
+import { labelCommentaryPhase } from "../translator/concerns/responsesPhase.js";
 import { extractClaudeSessionIdFromUserId } from "../utils/claudeCloaking.js";
 import { REASONING_TOKEN_FLOOR, REASONING_FLOOR_HOSTS, META_MAX_EFFORT_FLOOR, META_EFFORT_PROVIDERS } from "../config/runtimeConfig.js";
 import { addHeaders as addBuddyHeaders, isBuddyProvider } from "../utils/buddyRequestContext.js";
@@ -168,6 +169,9 @@ export class DefaultExecutor extends BaseExecutor {
         delete transformed.reasoning_effort;
         transformed.reasoning = { ...(transformed.reasoning || {}), effort };
       }
+      // quirk: Meta reads a replayed assistant message without `phase` as a
+      // finished turn, so restore "commentary" on preambles before tool calls.
+      if (this.config.quirks?.labelCommentaryPhase) labelCommentaryPhase(transformed);
       stripUnsupportedParams(this.provider, model, transformed);
     }
 
