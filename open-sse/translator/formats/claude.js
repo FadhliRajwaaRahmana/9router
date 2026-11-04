@@ -7,6 +7,7 @@ import { resolveSessionId } from "../../utils/sessionManager.js";
 import { isValidClaudeSignature } from "../../utils/claudeSignature.js";
 import { PROVIDERS } from "../../providers/index.js";
 import { getCapabilitiesForModel } from "../../providers/capabilities.js";
+import { budgetToLevel } from "../concerns/thinking.js";
 import { isDeepSeekModel } from "../../providers/models/helpers.js";
 import { DEFAULT_MAX_TOKENS } from "../../config/runtimeConfig.js";
 
@@ -169,8 +170,17 @@ export function fixToolUseOrdering(messages) {
   return merged;
 }
 
-// Models that reject thinking.type "adaptive" + output_config.effort (Opus 4.5+/Sonnet 4.6+ only)
-const ADAPTIVE_THINKING_UNSUPPORTED = /haiku/i;
+// Default budget when a budget-only model receives the adaptive shape.
+const PASSTHROUGH_BUDGET = 10000;
+
+// Thinking wire shape per model comes from the capability resolver, not a regex:
+// `/haiku/i` was right only until Haiku 5.5 arrived, which is adaptive-only like
+// the rest of generation 5.5. Model ids that resolve to neither format
+// (unknown/legacy) are left untouched.
+function thinkingFormatOf(provider, model) {
+  if (!model) return null;
+  return getCapabilitiesForModel(provider, model).thinkingFormat;
+}
 
 function handlesThinkingBlocks(provider) {
   return provider === "claude" || provider?.startsWith("anthropic-compatible") || provider === "deepseek";
@@ -206,24 +216,43 @@ function hasForeignServerToolUseId(block) {
 }
 
 // Normalize a native Claude passthrough body to match Anthropic Messages API spec.
-// Newer Cowork/Claude Code clients emit beta-only shapes that OAuth endpoints reject:
-// 1. thinking.type "adaptive" → unsupported on Haiku
-// 2. output_config.effort → unsupported on Haiku
+// Both thinking wire shapes travel on this path (the client sends Claude-native
+// JSON verbatim), so the body has to be brought onto the model's own shape:
+// 1. adaptive + output_config.effort → budget for budget-only models (Haiku 4.x, Opus 4.5, legacy)
+// 2. enabled+budget → adaptive + effort for adaptive-only models (generation 5.5 Haiku included)
 // 3. bare content-block objects (content: {block} instead of [{block}]) → wrapped first
 // 4. role "system" messages (mid-conversation-system beta) → only top-level system is allowed
 // 5. server_tool_use blocks carrying a foreign (non-srvtoolu_) id → rejected outright
-export function normalizeClaudePassthrough(body, model = "") {
+export function normalizeClaudePassthrough(body, model = "", provider = "") {
   if (!body || typeof body !== "object") return body;
 
+  const thinkingFormat = thinkingFormatOf(provider, model);
+
   // 1. Downgrade adaptive thinking for models that don't support it
-  if (body.thinking?.type === "adaptive" && ADAPTIVE_THINKING_UNSUPPORTED.test(model)) {
-    body.thinking = { type: "enabled", budget_tokens: 10000 };
+  if (body.thinking?.type === "adaptive" && thinkingFormat === "claude-budget") {
+    body.thinking = { type: "enabled", budget_tokens: PASSTHROUGH_BUDGET };
   }
 
   // 2. Strip effort param for models that don't support it (keep other output_config fields)
-  if (ADAPTIVE_THINKING_UNSUPPORTED.test(model) && body.output_config?.effort != null) {
+  if (thinkingFormat === "claude-budget" && body.output_config?.effort != null) {
     delete body.output_config.effort;
     if (Object.keys(body.output_config).length === 0) delete body.output_config;
+  }
+
+  // 3. Upconvert the budget shape for adaptive-only models. Claude Code still emits
+  //    thinking.type "enabled" with a 10k budget; Anthropic answers that with 400
+  //    ("thinking.type.enabled is not supported for this model"). The budget is the
+  //    only signal of how much thinking was asked for, so keep it as an effort level.
+  if (body.thinking?.type === "enabled" && thinkingFormat === "claude-adaptive") {
+    const level = budgetToLevel(body.thinking.budget_tokens);
+    body.thinking = { type: "adaptive", ...(body.thinking.display ? { display: body.thinking.display } : {}) };
+    // Claude has no "minimal" effort; "none" (no budget) leaves the field absent.
+    if (level) {
+      body.output_config = {
+        ...(body.output_config && typeof body.output_config === "object" ? body.output_config : {}),
+        effort: level === "minimal" ? "low" : level,
+      };
+    }
   }
 
   const originalLastRole = Array.isArray(body.messages) ? body.messages[body.messages.length - 1]?.role : undefined;

@@ -88,6 +88,13 @@ export function capabilitiesFromServiceKind(kind) {
 export const MODEL_CAPABILITIES = {
   // Claude Fable 5.1, Opus 5.5/5, 4.6/4.7/4.8, and Kiro Sonnet 5 have 1M context + adaptive thinking (override generic claude pattern)
   "claude-fable-5-1": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000 },
+  // Haiku 5.5 adalah pengecualian dari pola keluarga *claude*haiku* (budget).
+  // Anthropic menolak `thinking.type.enabled` untuk generasi 5.5 dengan 400
+  // "Use thinking.type.adaptive and output_config.effort". Exact id di sini
+  // berlaku untuk semua provider, jadi jalur passthrough OAuth `claude`
+  // (claude-haiku-5.5 bertitik) ikut benar tanpa override per-provider.
+  "claude-haiku-5-5":   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-haiku-5.5":   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
   // Claude Opus 5.5 / Sonnet 5.5 dotted ids: Kiro preview (rateMultiplier: 2.0, 1M context) (#4410),
   // GitHub Copilot and Token Harbor. Same models as the dashed rows below, so the same 400s
   // apply: Opus 5.5 rejects thinking.type "disabled", Sonnet 5.5 takes "between_tools" in its

@@ -1,6 +1,36 @@
 # Changelog
 # Unreleased
 
+# v0.5.159 (2026-11-04) — 9router-imagefix
+
+## Passthrough Claude: thinking dinormalisasi per model, bukan per nama
+
+0.5.158 memperbaiki jalur terjemahan, tetapi Claude Code ↔ provider
+`anthropic`/`claude` berjalan di jalur **passthrough** (`isNativePassthrough`),
+yang melewati `translateRequest` sepenuhnya — capability resolver tidak pernah
+dibaca. Normalizer passthrough masih memakai satu regex `/haiku/i` untuk semua
+Haiku, jadi setiap request ke `claude-haiku-5-5` Justru dipaksa ke bentuk
+`thinking.type "enabled"` yang ditolak modelnya. Log server menunjukkan
+`FMT: claude (passthrough)` + `THINK:10k`.
+
+- `normalizeClaudePassthrough(body, model, provider)` sekarang menentukan arah
+  normalisasi dari `getCapabilitiesForModel()`: bentuk `adaptive` +
+  `output_config.effort` diturunkan ke `enabled`+budget untuk model
+  budget-only (Haiku 4.x, Opus 4.5, legacy), dan sebaliknya bentuk
+  `enabled`+budget dinaikkan ke `adaptive`+effort untuk model adaptive-only.
+  Budget dipetakan ke effort lewat `budgetToLevel()` (10k → `medium`), jadi
+  kedalaman thinking yang diminta klien tidak hilang. Model yang tidak
+  menyatakan format dibiarkan apa adanya.
+- Exact id `claude-haiku-5-5` / `claude-haiku-5.5` masuk `MODEL_CAPABILITIES`
+  (`claude-adaptive`, 1M/128K) supaya jalur OAuth `claude` (id bertitik) ikut
+  benar tanpa override per-provider.
+- `chatCore` meneruskan `provider` ke normalizer.
+
+Live: bentuk mentah Claude Code → 400, hasil normalisasi → 200. `xhigh` dan
+`max` juga 200 pada model ini. Test baru:
+`unit/claude-passthrough-thinking-adaptive.test.js` (8 kasus, termasuk Haiku
+4.5 yang harus tetap budget).
+
 # v0.5.158 (2026-11-04) — 9router-imagefix
 
 ## Provider anthropic: Claude Haiku 5.5 tidak lagi 400
