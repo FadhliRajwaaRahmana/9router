@@ -243,6 +243,17 @@ export const PROVIDER_CAPABILITIES = {
   "github": {
     "claude-haiku-5.5": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
   },
+  // Provider `anthropic` (API key langsung ke api.anthropic.com) menerapkan aturan
+  // thinking per-model yang sama. Tanpa override ini claude-haiku-5-5 jatuh ke pola
+  // umum *claude*haiku* -> claude-budget, yang mengirim thinking.type "enabled" dan
+  // dijawab Anthropic dengan HTTP 400 "thinking.type.enabled is not supported for
+  // this model". Pola yang sama sudah dioverride untuk opencode-go / github /
+  // commandcode; provider aslinya sendiri terlewat. Batas mengikuti override lain
+  // (katalog synced: 1M konteks, maxOutput 128K), karena override memutus overlay
+  // katalog sehingga limit harus ditulis eksplisit di sini.
+  "anthropic": {
+    "claude-haiku-5-5": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  },
   // OpenCode Free (oc) — the free lane's MiMo route is OpenRouter-backed and takes
   // the plain OpenAI reasoning_effort enum verbatim (live probe on
   // oc/mimo-v2.6-flash-free: none|minimal|low|medium|high|xhigh|max all 200, any

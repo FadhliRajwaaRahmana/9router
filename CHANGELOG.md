@@ -1,6 +1,18 @@
 # Changelog
 # Unreleased
 
+# v0.5.158 (2026-11-04) — 9router-imagefix
+
+## Provider anthropic: Claude Haiku 5.5 tidak lagi 400
+
+- Override `claude-haiku-5-5` di `PROVIDER_CAPABILITIES.anthropic` →
+  `claude-adaptive` (konteks 1M, maxOutput 128K). Tanpa ini model jatuh ke pola
+  umum `*claude*haiku*` → `claude-budget` yang mengirim `thinking.type
+  "enabled"`, ditolak Anthropic dengan HTTP 400 ("thinking.type.enabled is not
+  supported for this model. Use thinking.type.adaptive..."). Pola yang sama
+  sudah dioverride untuk opencode-go / github / commandcode; provider aslinya
+  sendiri terlewat. Terverifikasi live lewat 9router lokal → HTTP 200.
+
 # v0.5.157 (2026-10-31) — 9router-imagefix
 
 ## Muse: tidak lagi "berhenti sendiri" setelah mengumumkan langkah
