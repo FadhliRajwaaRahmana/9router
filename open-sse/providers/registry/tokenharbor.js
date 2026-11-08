@@ -28,8 +28,15 @@ export default {
     // would force one format (e.g. claude-adaptive) onto every model.
     baseUrl: "https://tokenharbor.ai/v1/chat/completions",
     validateUrl: "https://tokenharbor.ai/v1/models",
+    // 429s here are never worth retrying in place. Measured 2026-11-08 —
+    // Token Harbor answers 429 with `Retry-After: 60` (and spells the number
+    // out in the body: "next request in 42 s"), while the executor's retry
+    // delay is 2 s. The wait can never bridge that gap, so attempts:2 bought
+    // three upstream round trips plus two 2 s pauses per account (~4.8 s
+    // measured) and then locked the account for 2 s anyway. Rotating to the
+    // next account is both cheaper and more likely to succeed.
     retry: {
-      429: 2,
+      429: 0,
     },
   },
   // Curated seed; the live catalogue is fetched via modelsFetcher and any other

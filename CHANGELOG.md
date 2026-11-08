@@ -1,6 +1,45 @@
 # Changelog
 # Unreleased
 
+# v0.5.160 (2026-11-08) — 9router-imagefix
+
+## Token Harbor: `server_busy` dikunci 60 detik, bukan 2 detik
+
+Provider `tokenharbor` membalas 429 dengan **dua bentuk berbeda**, dan hanya satu
+yang terklasifikasi benar:
+
+| Body | Sifat |
+| --- | --- |
+| `"under heavy load ... slowed down for a few minutes"`, `type: rate_limit_error` | beban **server**, horizon satu menit |
+| `"Rate limit reached ... next request in 42 s"`, `type: rate_limit_exceeded` | batas **per akun** |
+
+Bentuk pertama menulis `rate_limit_error` dengan **garis bawah**, sedangkan
+aturan teks generik mencari `rate limit` dengan **spasi** — jadi tidak ada aturan
+yang cocok dan ia jatuh ke aturan `{ status: 429, backoff: true }` paling bawah.
+`BACKOFF_CONFIG.base` = 2 detik, padahal Token Harbor mengirim
+`Retry-After: 60` di setiap respons tersebut. Request datang tiap ~15 detik,
+jadi akun yang sama di-probe berkali-kali sebelum sempat pulih.
+
+Diukur 8 Nov 2026: 47 dari 181 koneksi `tokenharbor` berisi `server_busy` di
+`lastError`, semuanya `backoffLevel` 1. Empat key di antaranya diuji ulang
+langsung ke upstream satu jam kemudian → 200 semua, jadi throttle-nya memang
+sementara, bukan kredensial mati.
+
+- `ERROR_RULES` dapat dua aturan baru di **atas** `{ text: "rate limit" }`
+  (aturan teks dievaluasi berurutan, jadi urutan itu yang menentukan):
+  `server_busy` dan `under heavy load`, keduanya → `TOKENHARBOR_BUSY_MS` (60 dtk),
+  ter-scope ke `provider: "tokenharbor"`.
+- Konstanta itu **literal `cooldownMs`, bukan `backoff: true`** — kalau memakai
+  `backoff`, `BACKOFF_CONFIG.max` (30 dtk) akan mengapitnya diam-diam, dan
+  eskalasi beruntun justru menjauh dari 60 dtk yang diminta server.
+- `transport.retry[429]` tokenharbor: **2 → 0**. Retry in-place menunggu 2 dtk,
+  mustahil menembus throttle 36–60 dtk, dan terukur membuang ~4,8 dtk per akun
+  (4852/4849/4902/4860 ms di log) sebelum tetap dikunci. Rotasi akun lebih murah.
+
+Verifikasi: `server_busy` → 60s (dari 2s), `rate_limit_exceeded` → tetap 2s
+(tidak ikut berubah), provider lain dengan body sama → tetap 2s (aturan
+ter-scope). Test baru `tests/unit/tokenharbor-server-busy.test.js` (6 test).
+
 # v0.5.159 (2026-11-04) — 9router-imagefix
 
 ## Passthrough Claude: thinking dinormalisasi per model, bukan per nama

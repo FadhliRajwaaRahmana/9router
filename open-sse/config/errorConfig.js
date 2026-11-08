@@ -74,6 +74,18 @@ const CODEBUDDY_LOCK_MS = 15 * 1000;
 // Park it for 24h; other accounts on the same provider still serve traffic.
 const CODEBUDDY_RESTRICTED_MS = 24 * 60 * 60 * 1000;
 
+// Token Harbor server-busy throttle. The upstream answers 429 `server_busy`
+// ("under heavy load ... slowed down for a few minutes") AND sends
+// `Retry-After: 60` on every such response. Before this rule the body matched
+// no text rule — it says "rate_limit_error" with an underscore while the rule
+// below looks for "rate limit" with a space — so it fell through to the bare
+// `status: 429` rule and parked the account for the 2 s backoff base, far
+// short of the minute the server asks for. Requests arrive about every 15 s,
+// so the account was re-probed several times before it could recover.
+// 60 s matches the Retry-After the server already sends; it is a literal
+// cooldownMs (no `backoff`), so BACKOFF_CONFIG.max does not cap it.
+const TOKENHARBOR_BUSY_MS = 60 * 1000;
+
 /**
  * Unified error classification rules.
  * Checked top-to-bottom: text rules first (by order), then status rules.
@@ -89,6 +101,16 @@ export const ERROR_RULES = [
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
   { text: "request not allowed",      cooldownMs: COOLDOWN.short },
   { text: "improperly formed request", cooldownMs: COOLDOWN.long },
+
+  // Token Harbor server-busy. MUST sit above the generic rate-limit wording
+  // below: it is a server-load verdict with a stated one-minute horizon, not
+  // the per-account "rate limit reached ... next request in 42 s" case, and
+  // the bare 2 s backoff it used to get was an order of magnitude too short.
+  // A literal cooldownMs (not `backoff`) so the 30 s BACKOFF_CONFIG.max does
+  // not silently cap it; see TOKENHARBOR_BUSY_MS.
+  { provider: "tokenharbor", text: "server_busy",      cooldownMs: TOKENHARBOR_BUSY_MS },
+  { provider: "tokenharbor", text: "under heavy load", cooldownMs: TOKENHARBOR_BUSY_MS },
+
   { text: "rate limit",               backoff: true },
   { text: "too many requests",        backoff: true },
   { text: "quota exceeded",           backoff: true },
