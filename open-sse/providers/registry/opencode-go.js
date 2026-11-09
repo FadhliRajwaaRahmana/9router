@@ -28,10 +28,27 @@ export default {
   // Multi-endpoint: pick the transport matching the client sourceFormat to skip
   // translation. Guarded per-model by `supportedFormats` (see chatCore) because
   // opencode-go models differ in endpoint support.
+  //
+  // The relay validates the THINKING shape per ENDPOINT, so the two constrained
+  // transports declare `thinkingFormat` (resolveFormat prefers it over the
+  // per-model capability, which describes the Chat wire). Measured 2026-11-09
+  // against one key on deepseek-v4.1-flash:
+  //   /chat/completions  accepts `reasoning_effort` AND `thinking:{type}` — no
+  //                      declaration, so qwen (`enable_thinking`) and minimax
+  //                      (`thinking`) keep resolving their native shapes.
+  //   /messages          HTTP 400 "reasoning_effort: requires a native Anthropic
+  //                      Messages target" the moment reasoning_effort is present.
+  //                      The deepseek capability emits exactly that field, so a
+  //                      Claude-shaped client 400'd on EVERY turn — including
+  //                      thinking-off, which needs no field at all because
+  //                      thinking:{type:"disabled"} already says it. Live: the
+  //                      same request minus the field is 200.
+  //   /responses         wants NESTED reasoning:{effort}; top-level
+  //                      reasoning_effort answers 503 "Endpoint is unavailable."
   transports: [
     { format: "openai", baseUrl: "https://opencode.ai/zen/go/v1/chat/completions", auth: { combined: true, header: "Authorization", scheme: "bearer" } },
-    { format: "claude", baseUrl: "https://opencode.ai/zen/go/v1/messages", auth: { combined: true, header: "x-api-key", scheme: "raw", anthropicVersion: true } },
-    { format: "openai-responses", baseUrl: "https://opencode.ai/zen/go/v1/responses", auth: { combined: true, header: "Authorization", scheme: "bearer" } },
+    { format: "claude", baseUrl: "https://opencode.ai/zen/go/v1/messages", thinkingFormat: "claude-adaptive", auth: { combined: true, header: "x-api-key", scheme: "raw", anthropicVersion: true } },
+    { format: "openai-responses", baseUrl: "https://opencode.ai/zen/go/v1/responses", thinkingFormat: "openai-responses", auth: { combined: true, header: "Authorization", scheme: "bearer" } },
   ],
   // supportedFormats follow the endpoint table in https://opencode.ai/docs/go/
   models: [
