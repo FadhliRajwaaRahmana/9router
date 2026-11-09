@@ -1,6 +1,53 @@
 # Changelog
 # Unreleased
 
+# v0.5.161 (2026-11-09) — 9router-imagefix
+
+## OpenCode Go: bentuk thinking per transport, bukan per provider
+
+Relay OpenCode Go memvalidasi bentuk thinking **per endpoint**, sementara
+`capabilities.js` mendeskripsikan wire **Chat**. Keluarga `deepseek` di sana
+berformat `deepseek`, yang menulis `reasoning_effort` — bentuk OpenAI. Begitu
+klien Anthropic-shaped (Claude Code) memilih transport `claude`, field itu ikut
+terkirim ke `/zen/go/v1/messages` dan dijawab:
+
+```
+HTTP 400  reasoning_effort: requires a native Anthropic Messages target
+```
+
+Termasuk saat thinking **dimatikan** — padahal saat itu tidak ada field yang
+dibutuhkan sama sekali, karena `thinking:{type:"disabled"}` sudah menyampaikan
+maksudnya. Hasilnya setiap turn 400 tanpa jalan keluar.
+
+| Endpoint | Bentuk yang diterima |
+| --- | --- |
+| `/chat/completions` | `reasoning_effort` **dan** `thinking:{type}` — keduanya 200 |
+| `/messages` | `thinking:{type}` saja; `reasoning_effort` → 400 |
+| `/responses` | `reasoning:{effort}` bersarang; `reasoning_effort` top-level → 503 |
+
+`resolveFormat()` sudah mendahulukan `thinkingFormat` milik transport di atas
+capability per-model, jadi perbaikannya cukup mendeklarasikannya di dua transport
+yang memang membatasi:
+
+- `claude` → `claude-adaptive` (`thinking:{type:"adaptive"}` + `output_config.effort`)
+- `openai-responses` → `openai-responses` (`reasoning:{effort}` bersarang)
+
+Transport **chat sengaja tidak** dideklarasikan: endpoint itu menerima kedua
+bentuk, sehingga qwen (`enable_thinking`) dan minimax (`thinking`) tetap memakai
+bentuk native masing-masing — alasan yang sama seperti `tokenharbor.js`.
+
+`claude-adaptive` dipilih ketimbang `claude-budget` karena `claude-haiku-5-5` di
+provider ini menolak `thinking.type "enabled"` dengan 400, dan format tingkat
+transport mendahului override capability model tersebut.
+
+Bukti live (1 key, 2026-11-09, `deepseek-v4.1-flash`): tanpa `reasoning_effort`
+200; dengan `reasoning_effort` 400; dengan `thinking:{budget_tokens}` 200;
+`/responses` dengan `reasoning:{effort}` 200.
+
+Test: `tests/unit/opencode-go-transport-thinking-format.test.js` (6 kasus).
+Suite unit 62 → 59 gagal, **0 regresi baru**.
+
+
 # v0.5.160 (2026-11-08) — 9router-imagefix
 
 ## Token Harbor: `server_busy` dikunci 60 detik, bukan 2 detik
