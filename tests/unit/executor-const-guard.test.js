@@ -74,13 +74,13 @@ describe("OpenCode Free endpoint routing", () => {
 
   it("routes Muse Spark to /responses and every other model to /chat/completions", () => {
     const executor = new OpenCodeExecutor();
-    expect(executor.buildUrl(MUSE)).toBe("https://opencode.ai/zen/v1/responses");
-    expect(executor.buildUrl(`${MUSE}(xhigh)`)).toBe("https://opencode.ai/zen/v1/responses");
-    expect(executor.buildUrl("muse-spark-1.3-contributor-free")).toBe("https://opencode.ai/zen/v1/responses");
-    expect(executor.buildUrl("muse-spark-1.4-contributor-free")).toBe("https://opencode.ai/zen/v1/responses");
-    expect(executor.buildUrl("muse-spark-2.0-contributor-free(xhigh)")).toBe("https://opencode.ai/zen/v1/responses");
-    expect(executor.buildUrl("big-pickle")).toBe("https://opencode.ai/zen/v1/chat/completions");
-    expect(executor.buildUrl("hy3-free")).toBe("https://opencode.ai/zen/v1/chat/completions");
+    expect(executor.buildUrl(MUSE)).toBe("https://opencode.ai/inference/v1/responses");
+    expect(executor.buildUrl(`${MUSE}(xhigh)`)).toBe("https://opencode.ai/inference/v1/responses");
+    expect(executor.buildUrl("muse-spark-1.3-contributor-free")).toBe("https://opencode.ai/inference/v1/responses");
+    expect(executor.buildUrl("muse-spark-1.4-contributor-free")).toBe("https://opencode.ai/inference/v1/responses");
+    expect(executor.buildUrl("muse-spark-2.0-contributor-free(xhigh)")).toBe("https://opencode.ai/inference/v1/responses");
+    expect(executor.buildUrl("big-pickle")).toBe("https://opencode.ai/inference/v1/chat/completions");
+    expect(executor.buildUrl("hy3-free")).toBe("https://opencode.ai/inference/v1/chat/completions");
   });
 
   it("normalizes Chat token/thinking fields only for the Responses model", () => {
@@ -115,24 +115,29 @@ describe("OpenCode Free endpoint routing", () => {
     expect(opencode.forceStream).toBe(true);
   });
 
-  // Fourth upstream gate (verified live 2026-09-18): the free tier fingerprints
-  // the official agentic client by the file-search quartet. 0-3 of these names
-  // → 403 FreeTierError; the quartet plus any extras → 200. Plain chat callers
-  // send no tools, so without injection every such request 403s.
-  it("injects the file-search tool quartet on Chat bodies", () => {
+  // Upstream gate: the free tier fingerprints the official agentic client by a
+  // tool pair. Missing names → 403 FreeTierError; the pair plus any extras → 200.
+  // Plain chat callers send no tools, so without injection every such request 403s.
+  // OpenCode v2 narrowed the marker from the old bash/glob/grep/read quartet to
+  // exactly `read` + `shell` with full argument schemas (fake empty-parameter
+  // stubs are no longer accepted).
+  it("injects the read+shell tool pair on Chat bodies", () => {
     const executor = new OpenCodeExecutor();
     const body = { model: "big-pickle", messages: [{ role: "user", content: "hi" }] };
     executor.transformRequest("big-pickle", body, true, {});
 
     const names = body.tools.map((t) => t.function.name).sort();
-    expect(names).toEqual(["bash", "glob", "grep", "read"]);
+    expect(names).toEqual(["read", "shell"]);
     for (const tool of body.tools) {
       expect(tool.type).toBe("function");
-      expect(tool.function.parameters).toEqual({ type: "object", properties: {} });
     }
+    const read = body.tools.find((t) => t.function.name === "read");
+    expect(read.function.parameters.required).toEqual(["path"]);
+    const shell = body.tools.find((t) => t.function.name === "shell");
+    expect(shell.function.parameters.required).toEqual(["command"]);
   });
 
-  it("keeps caller tools verbatim and only appends the missing quartet names", () => {
+  it("keeps caller tools verbatim and only appends the missing pair names", () => {
     const executor = new OpenCodeExecutor();
     const body = {
       model: "big-pickle",
@@ -145,18 +150,18 @@ describe("OpenCode Free endpoint routing", () => {
     executor.transformRequest("big-pickle", body, true, {});
 
     const names = body.tools.map((t) => t.function.name);
-    expect(names).toEqual(["my_tool", "bash", "glob", "grep", "read"]);
+    expect(names).toEqual(["my_tool", "bash", "read", "shell"]);
     // Caller's own `bash` declaration must survive untouched, not be replaced.
     expect(body.tools[1].function.description).toBe("punyaku");
   });
 
-  it("injects the quartet in Responses flat shape on the Responses endpoint", () => {
+  it("injects the read+shell pair in Responses flat shape on the Responses endpoint", () => {
     const executor = new OpenCodeExecutor();
     const body = { input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }] };
     executor.transformRequest("muse-spark-1.3-contributor-free", body, true, {});
 
     const names = body.tools.map((t) => t.name).sort();
-    expect(names).toEqual(["bash", "glob", "grep", "read"]);
+    expect(names).toEqual(["read", "shell"]);
     for (const tool of body.tools) {
       expect(tool.type).toBe("function");
       expect(tool.function).toBeUndefined(); // flat shape, not nested

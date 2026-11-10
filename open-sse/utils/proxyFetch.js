@@ -280,6 +280,10 @@ async function getDispatcher(proxyUrl, insecure = false) {
 
 async function fetchWithTlsFallback(url, options, proxyUrl) {
   try {
+    // Protocol adapters that need their own transport (opencode's TLS
+    // fingerprint) override the direct path; proxies still take priority, so a
+    // configured proxy keeps working and only the direct leg is impersonated.
+    if (!proxyUrl && options.directFetch) return await options.directFetch(url, options);
     const dispatcher = proxyUrl ? await getDispatcher(proxyUrl) : undefined;
     return await originalFetch(url, dispatcher ? { ...options, dispatcher } : options);
   } catch (err) {
@@ -459,6 +463,12 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   // Upstream dropped it in favour of fetchWithTlsFallback, but the fork measured
   // a throughput win on Google Cloud Code hosts, so it runs first and falls
   // through silently when unavailable.
+  //
+  // A caller-supplied `directFetch` (opencode's TLS fingerprint) MUST win over
+  // this fast path: the keep-alive dispatcher rides Node's OpenSSL fingerprint,
+  // which is exactly what the free-tier gate rejects. Without this guard the
+  // impersonating transport is only reachable when the agent is unavailable.
+  if (options.directFetch) return await options.directFetch(url, options);
   try {
     const dispatcher = await getKeepAliveAgent();
     if (dispatcher) {

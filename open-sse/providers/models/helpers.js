@@ -41,6 +41,17 @@ export function isDeepSeekModel(modelId) {
 // passthrough ids) — regex keeps auto-fetched models on the right endpoint:
 // /responses (gpt/grok/muse-spark), /messages (minimax/qwen), /chat/completions (rest).
 // Curated registry entries always win; this is the unknown-id fallback only.
+// OpenCode free-tier ids all end in "-free" on every lane (zen free, go, keyed
+// oc_sk_*). The gate is per-model, not per-provider: a free id on the keyed lane
+// still answers 403 FreeTierError with a real key, so callers switch to the
+// attested free-tier identity for exactly these ids.
+export function isOpencodeFreeTierModel(modelId) {
+  if (!modelId || typeof modelId !== "string") return false;
+  const clean = modelId.replace(/([^()]+)s*$/, "").trim();
+  const base = clean.includes("/") ? clean.split("/").pop() : clean;
+  return /-free$/i.test(base);
+}
+
 const OPENCODE_FAMILIES = [
   { match: /^(grok|gpt|muse[-_]?spark)/i, supportedFormats: [FORMATS.OPENAI_RESPONSES], targetFormat: FORMATS.OPENAI_RESPONSES },
   { match: /^deepseek-v4-(pro|flash)/, supportedFormats: [FORMATS.OPENAI, FORMATS.CLAUDE, FORMATS.OPENAI_RESPONSES] },

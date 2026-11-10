@@ -1,6 +1,56 @@
 # Changelog
 # Unreleased
 
+# v0.5.162 (2026-11-10) — 9router-imagefix
+
+## OpenCode Free: transport v2 (TLS + fingerprint) — 429 jadi 200
+
+`oc/*` selalu dijawab `429 FreeUsageLimitError`. Itu **bukan kuota habis**:
+gate-nya menilai **sidik jari TLS + bentuk request klien**, bukan IP.
+Bukti: CLI OpenCode v2.2.5 milik user berhasil 3/3 dari egress IP yang sama
+yang gagal untuk curl, dan empat IP keluar berbeda di tiga edge Cloudflare
+(`SIN`, `FRA`, `ORD`) sama-sama 429.
+
+Dua lapis yang harus diperbaiki:
+
+1. **Transport** — upstream memindahkan free tier ke `/inference/v1/*` dengan
+   UA `opencode/latest/2.0.26/cli`, `x-opencode-client: cli`, header sesi v2
+   (`x-opencode-session-id`, `x-session-affinity`, `x-session-id`), dan
+   **membuang** `x-opencode-request` yang kini dijawab 403. Format sesi harus
+   menuliskan `~(timeMs*0x1000 + counter)` di 12 hex pertama, counter 1–16.
+2. **Fork sendiri** — `proxyFetch.js` punya fast-path *keep-alive dispatcher*
+   yang memanggil `originalFetch` **sebelum** sampai ke `fetchWithTlsFallback`,
+   sehingga `directFetch` (transport impersonasi) tidak pernah dipakai selama
+   agent keep-alive tersedia. Gejalanya menipu: `opencodeTlsFetch()` manual
+   balas 200, tapi `executor.execute()` tetap 429. Guard-nya:
+
+   ```js
+   if (options.directFetch) return await options.directFetch(url, options);
+   ```
+
+Perubahan:
+
+- `executors/opencode.js` diganti versi upstream (endpoint, header, sesi v2)
+- `utils/opencodeFingerprint.js` diganti — menambah `applyEnvFingerprint`
+  (blok `<env>` di system prompt) dan mempersempit tool fingerprint dari
+  kuartet `bash/glob/grep/read` menjadi tepat `read` + `shell` dengan skema
+  argumen sungguhan
+- `utils/proxyFetch.js` + `executors/base.js` meneruskan `directFetch`
+- `executors/opencode-zen.js` memakai format sesi yang sama
+- helper baru `isOpencodeFreeTierModel()`
+- file baru: `services/opencodeTlsClient.js`, `services/lazyRuntime.js`,
+  `utils/writableDataDir.js`; devDep `wreq-js` + `playwright-core`
+
+Verifikasi: `oc/deepseek-v4.1-flash-free` balas **200** dengan
+`billing_source: "free"` lewat `/v1/messages` **dan** `/v1/chat/completions`
+pada server hasil build. Test: 90/90 di lima file opencode; suite unit
+59 → 50 gagal, **0 regresi baru** (dua sisa terkait OpenCode sudah gagal
+sebelum perubahan).
+
+Catatan: setelah ini kuota harian **per-IP** tetap berlaku (reset 00:00 UTC) —
+di titik itu rotasi proxy baru berguna.
+
+
 # v0.5.161 (2026-11-09) — 9router-imagefix
 
 ## OpenCode Go: bentuk thinking per transport, bukan per provider
