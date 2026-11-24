@@ -18,6 +18,21 @@ export default {
     },
   },
   category: "apikey",
+  // Fail fast saat macet. Respons sehat diukur 3–7 detik (TTFT, 18 Nov), jadi
+  // 45 detik sudah ~6x margin; yang melewatinya hampir pasti stall, bukan model
+  // yang lambat berpikir. Tanpa pengaturan ini BaseExecutor memakai timeout 60
+  // detik DAN mengulang 3x (502 attempts:3, delay 3 detik): satu stall menjadi
+  // 4 × 60 + 3 × 3 = 249 detik sebelum account fallback sempat berputar —
+  // persis angka 249166ms di log. noRetryTimeoutMs disamakan supaya timeout
+  // langsung dilempar sebagai "unreachable" dan akun berikutnya diambil.
+  // Retry 502/503 diturunkan ke 1x delay pendek: satu percobaan ulang menangkap
+  // gangguan sesaat, tanpa membayar empat kali waktu tunggu.
+  timeoutMs: 45000,
+  noRetryTimeoutMs: 45000,
+  retry: {
+    502: { attempts: 1, delayMs: 1000 },
+    503: { attempts: 1, delayMs: 1500 },
+  },
   transport: {
     baseUrl: "https://opencode.ai/zen/go/v1/chat/completions",
     headers: {},

@@ -1,6 +1,44 @@
 # Changelog
 # Unreleased
 
+# v0.5.164 (2026-11-24) — 9router-imagefix
+
+## OpenCode Go: stall 249 detik jadi ≤ 91 detik (fail-fast)
+
+Log produksi:
+
+```
+ERROR 502 · opencode-go/deepseek-v4.1-flash · 249166ms
+[502]: fetch connect timeout
+```
+
+Angka 249166 ms bukan kebetulan. Kebijakan retry default menghitungnya:
+
+```
+timeout 60 s × 4 percobaan (1 awal + 3 retry 502) + 3 × 3 s delay = 249 s
+```
+
+Padahal provider ini sehat di **3–7 detik** (TTFT terukur tiga kali lewat
+9Router). Jadi yang melewati 45 detik hampir pasti stall jaringan, bukan model
+yang lambat berpikir — dan menunggu 4 menit hanya menunda account fallback.
+
+Perubahan di `providers/registry/opencode-go.js`:
+
+| Setelan | Sebelum | Sesudah |
+|---|---|---|
+| `timeoutMs` | 60000 (default) | **45000** |
+| `noRetryTimeoutMs` | 90000 (default) | **45000** |
+| retry `502` | 3× delay 3000 | **1× delay 1000** |
+| retry `503` | 3× delay 2000 | **1× delay 1500** |
+
+`timeoutMs >= noRetryTimeoutMs` membuat `BaseExecutor` melempar timeout sebagai
+"unreachable" tanpa mengulang, sehingga akun berikutnya langsung diambil.
+Jalur stall terburuk turun dari **249 s → 91 s**, dan stall koneksi murni
+berhenti di **45 s**.
+
+Tes: 26/26 hijau (`opencode-go-fail-fast`, `transport-routing`,
+`transport-thinking-format`).
+
 # v0.5.163 (2026-11-24) — 9router-imagefix
 
 ## Claude Fable 5.2: thinking adaptive-only + proxy aman untuk OpenCode Free
