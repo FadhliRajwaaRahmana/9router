@@ -255,6 +255,17 @@ export function normalizeClaudePassthrough(body, model = "", provider = "") {
     }
   }
 
+  // Jalur passthrough tidak melewati prepareClaudeRequest(), jadi pemeriksaan
+  // forced tool_choice di sana tidak pernah jalan. Fable 5.2 / Opus 5.5 / Sonnet
+  // 5.5 menolak any/tool dengan 400 — demote di sini juga.
+  if (thinkingFormatOf(provider, body.model || model) === "claude-adaptive") {
+    const modelCaps = getCapabilitiesForModel(provider, body.model || model);
+    if (modelCaps.forcedToolChoice === false && (body.tool_choice?.type === "any" || body.tool_choice?.type === "tool")) {
+      const { disable_parallel_tool_use } = body.tool_choice;
+      body.tool_choice = { type: "auto", ...(disable_parallel_tool_use !== undefined ? { disable_parallel_tool_use } : {}) };
+    }
+  }
+
   const originalLastRole = Array.isArray(body.messages) ? body.messages[body.messages.length - 1]?.role : undefined;
 
   // 3. Wrap bare content-block objects as one-element arrays before folding.

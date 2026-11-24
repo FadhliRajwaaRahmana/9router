@@ -1,6 +1,34 @@
 # Changelog
 # Unreleased
 
+# v0.5.163 (2026-11-24) — 9router-imagefix
+
+## Claude Fable 5.2: thinking adaptive-only + proxy aman untuk OpenCode Free
+
+Dua perbaikan:
+
+1. **Fable 5.2 HTTP 400** — `claude-fable-5-2` / `claude-fable-5.2` tidak
+   punya entri capability, sehingga jatuh ke pola `*claude*fable*` →
+   `claude-budget` yang mengirim `thinking.type:"enabled"` + `budget_tokens`.
+   Anthropic menolaknya:
+   `"thinking.type.enabled" is not supported for this model. Use
+   "thinking.type.adaptive" and "output_config.effort"`.
+   Entri exact baru memetakan kedua ejaan ke `claude-adaptive`,
+   `thinkingCanDisable:false`, `forcedToolChoice:false`, 1M konteks / 128K output.
+   Jalur passthrough Claude Code juga kini melakukan demote forced
+   `tool_choice` any/tool → auto (sebelumnya hanya di `prepareClaudeRequest`,
+   yang tidak dipanggil pada jalur passthrough).
+
+2. **OpenCode Free melalui proxy** — `proxyAwareFetch` dulu melewati
+   `directFetch` saat ada proxy, sehingga memasang proxy apa pun mematikan
+   impersonasi TLS dan menghasilkan 429. Kini `directFetch` menerima proxy
+   dan meneruskannya ke `wreq-js` (sesi di-cache per-proxy karena wreq menolak
+   perubahan proxy setelah sesi dibuat). Terbukti 200 lewat proxy CONNECT
+   lokal; WARP tetap 429 karena blok IP Cloudflare-nya jenuh.
+
+Tes: 75/76 hijau pada 5 file terkait Fable; 1 kegagalan MiniMax sudah ada
+di baseline. 183/186 hijau pada 14 file OpenCode; 3 kegagalan baseline.
+
 # v0.5.162 (2026-11-10) — 9router-imagefix
 
 ## OpenCode Free: transport v2 (TLS + fingerprint) — 429 jadi 200

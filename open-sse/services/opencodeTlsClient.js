@@ -37,7 +37,11 @@ const OPENCODE_CIPHER_LIST = [
 
 const DEFAULT_TIMEOUT_MS = 120000;
 
-let sessionPromise = null;
+// wreq fixes the proxy at session-creation time ("Session proxy cannot be
+// changed after creation"), so one session is kept per proxy URL. Key "" is the
+// direct leg. Bounded so a rotating proxy pool cannot leak native handles.
+const sessions = new Map();
+const MAX_SESSIONS = 32;
 
 export class OpencodeTlsUnavailableError extends Error {
   constructor(message) {
@@ -46,29 +50,41 @@ export class OpencodeTlsUnavailableError extends Error {
   }
 }
 
-async function loadSession() {
-  if (!sessionPromise) {
-    sessionPromise = (async () => {
-      const wreq = await loadRuntimeDep("wreq-js");
-      if (typeof wreq.createSession !== "function") {
-        throw new Error("wreq-js runtime is missing createSession");
-      }
-      return wreq.createSession({
-        emulation: { tlsOptions: { cipherList: OPENCODE_CIPHER_LIST } },
-      });
-    })().catch((error) => {
-      sessionPromise = null;
-      throw error;
-    });
+async function loadSession(proxy) {
+  const key = proxy || "";
+  const cached = sessions.get(key);
+  if (cached) return cached;
+
+  if (sessions.size >= MAX_SESSIONS) {
+    const oldestKey = sessions.keys().next().value;
+    const oldest = sessions.get(oldestKey);
+    sessions.delete(oldestKey);
+    oldest?.then((session) => session.close?.()).catch(() => {});
   }
-  return sessionPromise;
+
+  const created = (async () => {
+    const wreq = await loadRuntimeDep("wreq-js");
+    if (typeof wreq.createSession !== "function") {
+      throw new Error("wreq-js runtime is missing createSession");
+    }
+    return wreq.createSession({
+      emulation: { tlsOptions: { cipherList: OPENCODE_CIPHER_LIST } },
+      ...(proxy ? { proxy } : {}),
+    });
+  })().catch((error) => {
+    sessions.delete(key);
+    throw error;
+  });
+
+  sessions.set(key, created);
+  return created;
 }
 
-/** Drop the cached session so the next call builds a fresh one. */
+/** Drop every cached session so the next call builds fresh ones. */
 export function resetOpencodeTlsSession() {
-  const pending = sessionPromise;
-  sessionPromise = null;
-  pending?.then((session) => session.close?.()).catch(() => {});
+  const pending = [...sessions.values()];
+  sessions.clear();
+  for (const promise of pending) promise?.then((session) => session.close?.()).catch(() => {});
 }
 
 /**
@@ -78,10 +94,10 @@ export function resetOpencodeTlsSession() {
  * Streaming is preserved: the response body is handed over as the live
  * ReadableStream, never buffered.
  */
-export async function opencodeTlsFetch(url, init = {}, { signal, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+export async function opencodeTlsFetch(url, init = {}, { signal, timeoutMs = DEFAULT_TIMEOUT_MS, proxy } = {}) {
   let session;
   try {
-    session = await loadSession();
+    session = await loadSession(proxy);
   } catch (error) {
     throw new OpencodeTlsUnavailableError(
       `wreq-js unavailable (${error instanceof Error ? error.message : "unknown"}) — install the optional wreq-js dependency to reach the OpenCode free tier`

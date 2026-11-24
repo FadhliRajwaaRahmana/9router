@@ -281,9 +281,13 @@ async function getDispatcher(proxyUrl, insecure = false) {
 async function fetchWithTlsFallback(url, options, proxyUrl) {
   try {
     // Protocol adapters that need their own transport (opencode's TLS
-    // fingerprint) override the direct path; proxies still take priority, so a
-    // configured proxy keeps working and only the direct leg is impersonated.
-    if (!proxyUrl && options.directFetch) return await options.directFetch(url, options);
+    // fingerprint) take the whole request, proxy included: the emulated TLS
+    // stack rides the CONNECT tunnel intact (measured 2026-11-18 — 200 through
+    // a plain CONNECT proxy), so the fingerprint survives the hop. Delegating
+    // to the native dispatcher instead would send Node's OpenSSL ClientHello
+    // and trip the free-tier gate — node fetch measured 429 on both the real IP
+    // and a WARP address while the impersonated client answered 200.
+    if (options.directFetch) return await options.directFetch(url, options, proxyUrl || null);
     const dispatcher = proxyUrl ? await getDispatcher(proxyUrl) : undefined;
     return await originalFetch(url, dispatcher ? { ...options, dispatcher } : options);
   } catch (err) {

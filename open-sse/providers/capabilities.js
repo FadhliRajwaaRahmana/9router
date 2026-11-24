@@ -86,6 +86,14 @@ export function capabilitiesFromServiceKind(kind) {
  * otherwise mis-match. Only declare deltas vs DEFAULT.
  */
 export const MODEL_CAPABILITIES = {
+  // Fable 5.2 adalah model adaptive-only: thinking.type "enabled"/"disabled" dan
+  // budget_tokens ditolak 400 ("Use thinking.type.adaptive and output_config.effort").
+  // Tanpa entri exact ini, id tersebut jatuh ke pola `*claude*fable*` -> claude-budget
+  // yang mengirim "enabled" + budget_tokens. Kedua ejaan (dash dan titik) dipetakan,
+  // mengikuti pola pasangan haiku/opus/sonnet 5.5 di bawah. forced tool_choice any/tool
+  // juga 400 pada Fable 5.2, jadi dinonaktifkan di sini.
+  "claude-fable-5-2": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, forcedToolChoice: false, contextWindow: 1000000, maxOutput: 128000 },
+  "claude-fable-5.2": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, forcedToolChoice: false, contextWindow: 1000000, maxOutput: 128000 },
   // Claude Fable 5.1, Opus 5.5/5, 4.6/4.7/4.8, and Kiro Sonnet 5 have 1M context + adaptive thinking (override generic claude pattern)
   "claude-fable-5-1": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000 },
   // Haiku 5.5 adalah pengecualian dari pola keluarga *claude*haiku* (budget).
